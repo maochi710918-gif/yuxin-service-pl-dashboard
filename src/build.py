@@ -1,17 +1,20 @@
 # -*- coding: utf-8 -*-
 """服務部損益 Data Model builder: Excel -> Fact/Dim tables -> data.json + 資料模型.xlsx"""
 import openpyxl, json, re, sys
-import pandas as pd, os
+import pandas as pd, os, shutil, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-SRC = r'C:\Users\ES\OneDrive\桌面\AI參照\複本 2026損益表.xlsx'
+SRC = sys.argv[1] if len(sys.argv) > 1 else r'C:\Users\ES\OneDrive\桌面\AI參照\2026損益表 的複本1001.xlsx'
+_tmp = os.path.join(tempfile.gettempdir(), '_svc_pl_src.xlsx'); shutil.copyfile(SRC, _tmp)  # 避免 Excel 開啟中被鎖定
+SRC_NAME = os.path.basename(SRC); SRC = _tmp
 MONTH_SHEETS = ['2601', '2602', '2603', '2604', '2605', '2606', '2607', '2608']
 NM = len(MONTH_SHEETS)
-BR = ['輔大', '三重', '林口', '土城', '中和', '新莊', '新店', '板橋', '汐止', '基隆', '承德', '淡水', '大安', '民權', '濱江', '北投']
-HQ = '服務部本部'  # 服務部總表 − 16 廠加總 (未分攤至廠之收入/費用)
-ENT = BR + [HQ]
-
 wb = openpyxl.load_workbook(SRC, data_only=True)
+# 單位清單：直接讀 2601 表頭（新增單位會自動帶入）
+BR = [str(h.value).strip() for h in wb[MONTH_SHEETS[0]][1][2:] if h.value is not None and str(h.value).strip()]
+HQ = '服務部本部'  # 服務部總表 − 各單位加總 (未分攤之收入/費用)
+ENT = BR + [HQ]
+TYPE = ['鈑噴中心' if '鈑噴' in b else '服務廠' for b in BR]
 ws = wb['服務部']
 num = lambda x: float(x) if isinstance(x, (int, float)) else 0.0
 code_s = lambda c: str(c).strip() if c is not None else ''
@@ -57,7 +60,7 @@ for i in range(start, end + 1):
 # ---------- 2. 讀各月廠別矩陣 (Wide -> 值陣列) ----------
 recon = []
 for a in accts:
-    a['v'] = [[0.0] * NM for _ in ENT]
+    a['v'] = [[0.0] * NM for _ in ENT]; a['blank'] = set()
 for mi, sh in enumerate(MONTH_SHEETS):
     rows = list(wb[sh].iter_rows(values_only=True))
     hdr = [str(h).strip() if h else '' for h in rows[0]]
@@ -72,7 +75,9 @@ for mi, sh in enumerate(MONTH_SHEETS):
         r = rows[ri] if ri is not None else None
         s = 0.0
         for bi, b in enumerate(BR):
-            val = num(r[col[b]]) if r else 0.0
+            raw = r[col[b]] if r and col[b] < len(r) else None
+            if raw is None: a['blank'].add((bi, mi))
+            val = num(raw)
             a['v'][bi][mi] = val; s += val
         a['v'][len(BR)][mi] = a['svc'][mi] - s  # 本部 = 總表 − 各廠
 
@@ -89,6 +94,27 @@ for k, xr in KPI_ROWS.items():
         vals.append([num(wsm.cell(mrow, hdr.index(b) + 1).value) for b in BR])
     kpis[k] = dict(svc=svc, br=[[vals[m][b] for m in range(NM)] for b in range(len(BR))],
                    b26=num(ws.cell(xr, 25).value), a25=num(ws.cell(xr, 27).value))
+
+# 廠別公式勾稽：空白小計列依公式補算並記錄；非空白但不符只警告、不調整
+fills = []
+def _a(code): return next(a for a in accts if a['code'] == code)
+FORM = [('120', '零服毛利 = 營收 − 成本', lambda g: g('100') - g('110')),
+        ('90', '零服業務貢獻 = 毛利 + 獎金 − 外促 − 內促 − 固薪', lambda g: g('120') + g('130') - g('140') - g('150') - g('160')),
+        ('500', '營業利益 = 業務貢獻 + 週邊 − 費用', lambda g: g('90') + g('170') - g('490')),
+        ('520', '稅前淨利 = 營業利益 + 業外淨收入', lambda g: g('500') + g('510'))]
+for bi, b in enumerate(BR):
+    for mi in range(NM):
+        g = lambda code: _a(code)['v'][bi][mi]
+        for code, label, f in FORM:
+            a = _a(code); calc = f(g); book = a['v'][bi][mi]
+            if (bi, mi) in a['blank'] and abs(calc) > 0.5:
+                a['v'][bi][mi] = calc
+                fills.append(dict(type='公式補算', item=f"{b}｜{code} {a['name']}（Excel 儲存格空白，依「{label}」補算）", month=mi + 1, book=0.0, detail=calc, diff=-calc))
+            elif abs(book - calc) > 1 and (bi, mi) not in a['blank']:
+                fills.append(dict(type='廠別公式差異', item=f"{b}｜{label}", month=mi + 1, book=book, detail=calc, diff=book - calc))
+for a in accts:  # 補算後本部殘差同步
+    for mi in range(NM):
+        a['v'][len(BR)][mi] = a['svc'][mi] - sum(a['v'][bi][mi] for bi in range(len(BR)))
 
 # 刪除全零科目
 def nz(a):
@@ -109,7 +135,7 @@ for a in accts:
     if a['parent'] is not None: children.setdefault(a['parent'], []).append(a['id'])
 by_code = {}
 for a in accts: by_code.setdefault(a['code'], a)
-checks = []
+checks = list(fills)
 for pid, ch in children.items():
     p = accts[pid]
     if p['code'] in ('120', '500', '520', '90', '510'): continue
@@ -201,7 +227,7 @@ checks.append(dict(type='借貸', item='借方 − 貸方 = 金額 (4,431 筆)',
 # ---------- 5. 輸出 ----------
 def r0(x): return round(x)
 out = dict(
-    meta=dict(src='複本 2026損益表.xlsx', months=NM, year=2026, ent=ENT, br=BR, hq=HQ,
+    meta=dict(src=SRC_NAME, months=NM, year=2026, ent=ENT, br=BR, hq=HQ, type=TYPE,
               note='2025 僅有年度合計（服務部層級），無月別、無廠別；同期比較採「25年實績 ÷ 12 × 月數」均攤推估。'),
     acc=[dict(id=a['id'], c=a['code'], n=a['name'], l=a['lvl'], p=a['parent'], x=a['xrow'],
               v=[[r0(x) for x in row] for row in a['v']], b26=r0(a['b26']), a25=r0(a['a25']), a24=r0(a['a24'])) for a in accts],
@@ -224,7 +250,7 @@ for a in accts:
                                資料來源=f"{MONTH_SHEETS[mi]}!" + ('總表差額' if b == HQ else b)))
 with pd.ExcelWriter(os.path.join(HERE, '資料模型_服務部損益.xlsx')) as w:
     pd.DataFrame([dict(資料表=n, 說明=d) for n, d in [
-        ('Fact_PL', '損益事實表：年度×月份×廠別×科目（Long Format）。服務部本部 = 服務部總表 − 16廠加總'),
+        ('Fact_PL', '損益事實表：年度×月份×廠別×科目（Long Format）。服務部本部 = 服務部總表 − 各單位加總'),
         ('Fact_Expense', '費用明細表：1–8月廣促費流水帳 + AI 摘要分類'),
         ('Dim_Account', '會計科目主檔：代碼、層級、上層科目、26預算、25/24實績（年度，服務部層級）'),
         ('Dim_Branch', '廠別主檔'), ('Dim_Date', '日期表'), ('勾稽', '財務數字勾稽結果'),
@@ -236,7 +262,7 @@ with pd.ExcelWriter(os.path.join(HERE, '資料模型_服務部損益.xlsx')) as 
     pd.DataFrame([dict(科目代碼=a['code'], 科目名稱=a['name'], 層級=a['lvl'],
                        上層科目=accts[a['parent']]['name'] if a['parent'] is not None else '',
                        YTD實績=sum(a['svc']), 預算26年=a['b26'], 實績25年=a['a25'], 實績24年=a['a24'], 總表列號=a['xrow']) for a in accts]).to_excel(w, sheet_name='Dim_Account', index=False)
-    pd.DataFrame([dict(廠別=b, 類型='服務廠' if b != HQ else '本部/未分攤') for b in ENT]).to_excel(w, sheet_name='Dim_Branch', index=False)
+    pd.DataFrame([dict(廠別=b, 類型=(TYPE[i] if i < len(BR) else '本部/未分攤')) for i, b in enumerate(ENT)]).to_excel(w, sheet_name='Dim_Branch', index=False)
     pd.DataFrame([dict(年度=2026, 月份=m, 季度=(m - 1) // 3 + 1, 年月=f'2026-{m:02d}', 是否有資料='是' if m <= NM else '否') for m in range(1, 13)]).to_excel(w, sheet_name='Dim_Date', index=False)
     pd.DataFrame(checks).to_excel(w, sheet_name='勾稽', index=False)
 
