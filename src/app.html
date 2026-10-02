@@ -308,6 +308,7 @@ function dTag(cur,base,sign=1,asPP=false){ // sign 1 = 越高越好
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const entName=e=>ENT[e]===HQ?HQ:bn(ENT[e]);
 const entsLabel=c=>c.all?'服務部（全部）':c.ents.length===1?entName(c.ents[0]):c.ents.length+' 個單位';
+const perTag=c=>c.m0===c.m1?`${c.m0}月`:c.m0===1?`1–${c.m1}月累計`:`${c.m0}–${c.m1}月`;
 const perLabel=c=>c.m0===c.m1?`2026/${c.m0}月`:`2026/${c.m0}–${c.m1}月`;
 
 /* ---------- charts ---------- */
@@ -547,11 +548,11 @@ R.ceo=el=>{
   head(el,'今年服務部經營得怎麼樣？',`${entsLabel(c)}｜${perLabel(c)}｜比較基準：${bl}｜點任一 KPI 往下追`);
   el.insertAdjacentHTML('beforeend',baseNote(c));
   el.insertAdjacentHTML('beforeend',`<div class="grid g4">
-   ${kpiCard({l:'累計營收',v:W(cu.rev)+'<small>萬</small>',tag:dTag(cu.rev,ba.rev,1),c:`${bl} ${Wu(ba.rev)}<br>差額 ${SW(cu.rev-ba.rev)} 萬`,click:"drillMetric('rev')"})}
+   ${kpiCard({l:`${perTag(c)}營收`,v:W(cu.rev)+'<small>萬</small>',tag:dTag(cu.rev,ba.rev,1),c:`${bl} ${Wu(ba.rev)}<br>差額 ${SW(cu.rev-ba.rev)} 萬`,click:"drillMetric('rev')"})}
    ${kpiCard({l:'零服毛利',v:W(cu.gp)+'<small>萬</small>',tag:dTag(cu.gp,ba.gp,1),c:`毛利率 ${P(cu.gm)}（${pp(cu.gm-ba.gm)}）<br>差額 ${SW(cu.gp-ba.gp)} 萬`,click:"drillMetric('gp')"})}
    ${kpiCard({l:'★ 零服業務貢獻(邊貢)',v:W(cu.contrib)+'<small>萬</small>',tag:dTag(cu.contrib,ba.contrib,1),c:`業務貢獻率(邊貢率) <b>${P(cu.cr)}</b>（${pp(cu.cr-ba.cr)}）<br>差額 ${SW(cu.contrib-ba.contrib)} 萬`,click:"drillMetric('contrib')"}).replace('card kpi','card kpi hero')}
    ${kpiCard({l:'營業利益',v:W(cu.op)+'<small>萬</small>',tag:dTag(cu.op,ba.op,1),c:`利益率 ${P(cu.opm)}（${pp(cu.opm-ba.opm)}）<br>差額 ${SW(cu.op-ba.op)} 萬`,click:"drillMetric('op')"})}
-   ${kpiCard({l:'累計費用',v:W(cu.exp)+'<small>萬</small>',tag:dTag(cu.exp,ba.exp,-1),c:`費用率 ${P(cu.er)}（${pp(cu.er-ba.er)}）<br>差額 ${SW(cu.exp-ba.exp)} 萬`,click:"drillMetric('exp')"})}
+   ${kpiCard({l:`${perTag(c)}費用`,v:W(cu.exp)+'<small>萬</small>',tag:dTag(cu.exp,ba.exp,-1),c:`費用率 ${P(cu.er)}（${pp(cu.er-ba.er)}）<br>差額 ${SW(cu.exp-ba.exp)} 萬`,click:"drillMetric('exp')"})}
    ${kpiCard({l:'預算達成率（業務貢獻(邊貢)）',v:c.all?P(ratio(cu.contrib,b26.contrib),0):'—',tag:c.all?dTag(cu.contrib,b26.contrib,1):'<span class="tag neu">僅全公司</span>',c:c.all?`預算均攤 ${Wu(b26.contrib)}<br>預算邊貢率 ${P(b26.cr)}`:'預算僅有服務部層級',click:"S.page='yoy';render()"})}
    ${kpiCard({l:'預算達成率（營業利益）',v:c.all?P(ratio(cu.op,b26.op),0):'—',tag:c.all?dTag(cu.op,b26.op,1):'<span class="tag neu">僅全公司</span>',c:c.all?`預算均攤 ${Wu(b26.op)}<br>營收達成 ${P(ratio(cu.rev,b26.rev),0)}`:'預算僅有服務部層級',click:"S.page='yoy';render()"})}
    ${kpiCard({l:'稅前淨利',v:W(cu.pbt)+'<small>萬</small>',tag:dTag(cu.pbt,ba.pbt,1),c:`業外淨收入 ${Wu(cu.nonop)}<br>差額 ${SW(cu.pbt-ba.pbt)} 萬`,click:"S.page='pl';render()"})}
@@ -832,7 +833,7 @@ R.promo=el=>{
   head(el,'廣促費解剖室',`${entsLabel(c)}｜${perLabel(c)}｜廣促＝零服外促費用(140)＝現金外促(折讓單)＋非現金外促(6117)`);
   el.insertAdjacentHTML('beforeend',baseNote(c));
   el.insertAdjacentHTML('beforeend',`<div class="grid g4">
-   ${kpiCard({l:'今年廣促費',v:W(ext)+'<small>萬</small>',tag:dTag(ext,extB,-1),c:`${bl} ${Wu(extB)}｜差 ${SW(ext-extB)} 萬`,click:`openDrill(nodeAcct(${byCode['140'].id},ctx().ents,S.m0,S.m1))`})}
+   ${kpiCard({l:`${perTag(c)}廣促費`,v:W(ext)+'<small>萬</small>',tag:dTag(ext,extB,-1),c:`${bl} ${Wu(extB)}｜差 ${SW(ext-extB)} 萬`,click:`openDrill(nodeAcct(${byCode['140'].id},ctx().ents,S.m0,S.m1))`})}
    ${kpiCard({l:'占營收',v:P(ext/V('100',c)),c:c.all?`25年全年 ${P(byCode['140'].a25/byCode['100'].a25)}`:''})}
    ${kpiCard({l:'最高月份',v:mx+'月',c:`${Wu(Math.max(...monthly))}`})}
    ${kpiCard({l:'最高廠',v:brv[0]?ENT[brv[0].e]:'—',c:brv[0]?Wu(brv[0].v)+'（各廠金額含優惠券毛額；遞延沖回在本部）':''})}</div>
@@ -1341,7 +1342,7 @@ function hrFocus(key){ return (el,c,b,bl)=>{
   const ms=months({m0:1,m1:NM}); const mv=ms.map(m=>hv(key,{...c,m0:m,m1:m})); const mom=ms.map((m,i)=>i?mv[i]-mv[i-1]:null);
   const mx=ms[mv.indexOf(Math.max(...mv.slice(c.m0-1,c.m1)))], mi=mom.slice(1).reduce((best,v,i)=>v>best.v?{v,m:i+2}:best,{v:-Infinity,m:null});
   const bs=hrBranches(c); const topB=bs.slice().sort((x,y)=>y[key]-x[key])[0]; const incB=bs.filter(x=>x.g.label&&!x.closed).sort((x,y)=>y.g['d'+key]-x.g['d'+key])[0];
-  el.insertAdjacentHTML('beforeend',`<div class="grid g4">${kpiCard({l:`今年${HRK[key].n}`,v:W(p[key])+'<small>萬</small>',tag:dTag(p[key],q[key],-1),c:`${bl} ${Wu(q[key])}｜差 ${SW(p[key]-q[key])} 萬`,click:`openDrill(nodeHrMonths('${key}'))`})}
+  el.insertAdjacentHTML('beforeend',`<div class="grid g4">${kpiCard({l:`${perTag(c)}${HRK[key].n}`,v:W(p[key])+'<small>萬</small>',tag:dTag(p[key],q[key],-1),c:`${bl} ${Wu(q[key])}｜差 ${SW(p[key]-q[key])} 萬`,click:`openDrill(nodeHrMonths('${key}'))`})}
    ${kpiCard({l:key==='fix'?'增加最多的月份':'最高月份',v:(key==='fix'?mi.m:mx)+'月',c:key==='fix'?`較上月 ${SW(mi.v)} 萬`:`${Wu(Math.max(...mv.slice(c.m0-1,c.m1)))}；增加最多 ${mi.m}月 ${SW(mi.v)} 萬`})}
    ${kpiCard({l:'金額最高的廠',v:topB?topB.b:'—',c:topB?`${Wu(topB[key])}｜占營收 ${P(topB[key]/topB.rev)}`:''})}
    ${kpiCard({l:'增加最多的廠',v:incB?incB.b:'—',c:incB?`${SW(incB.g['d'+key])} 萬（${SP(incB.g[key])}）<br>${incB.g.label}`:'資料期間不足'})}</div>
