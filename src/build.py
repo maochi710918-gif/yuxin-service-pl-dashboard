@@ -11,7 +11,9 @@ MONTH_SHEETS = ['2601', '2602', '2603', '2604', '2605', '2606', '2607', '2608']
 NM = len(MONTH_SHEETS)
 wb = openpyxl.load_workbook(SRC, data_only=True)
 # 單位清單：直接讀 2601 表頭（新增單位會自動帶入）
-BR = [str(h.value).strip() for h in wb[MONTH_SHEETS[0]][1][2:] if h.value is not None and str(h.value).strip()]
+_hdrs = [[str(h.value).strip() for h in wb[sh][1][2:] if h.value is not None and str(h.value).strip()] for sh in MONTH_SHEETS]
+BR = [b for b in _hdrs[0] if all(b in h for h in _hdrs)]
+SKIPPED_COLS = sorted({(b, MONTH_SHEETS[k]) for k, h in enumerate(_hdrs) for b in h if b not in BR})
 HQ = '服務部本部'  # 服務部總表 − 各單位加總 (未分攤之收入/費用)
 ENT = BR + [HQ]
 TYPE = ['鈑噴中心' if '鈑噴' in b else '服務廠' for b in BR]
@@ -135,7 +137,7 @@ for a in accts:
     if a['parent'] is not None: children.setdefault(a['parent'], []).append(a['id'])
 by_code = {}
 for a in accts: by_code.setdefault(a['code'], a)
-checks = list(fills)
+checks = list(fills) + [dict(type='欄位排除', item=f'{sh} 工作表「{b}」欄：不是 8 個月份都有的單位欄位，未納入（避免重複計算）', month=0, book=0, detail=0, diff=0) for b, sh in SKIPPED_COLS]
 for pid, ch in children.items():
     p = accts[pid]
     if p['code'] in ('120', '500', '520', '90', '510'): continue
@@ -164,7 +166,7 @@ for a in accts:
     if abs(tot - s) > 1:
         checks.append(dict(type='YTD合計', item=f"{a['code']} {a['name']}", month=0, book=tot, detail=s, diff=tot - s))
 
-# ---------- 4. 費用明細 + 摘要智慧分類 ----------
+# ---------- 4. 費用明細（總帳傳票明細，1002 版起）+ 摘要智慧分類 ----------
 e = pd.read_excel(SRC, sheet_name='2601-08費用表')
 RULES = [
     (r'遞延收益沖', '會員遞延收益沖銷', None),
@@ -186,6 +188,7 @@ RULES = [
     (r'定保|春檢', '促銷活動', '定保招攬折抵'),
     (r'折', '優惠券', '現金折抵'),
 ]
+PROMO = {'61179910', '61179918'}
 def classify(s):
     s = str(s)
     for pat, big, sub in RULES:
@@ -198,31 +201,84 @@ def classify(s):
                 sub = '台數活動贈品' if '台數' in s else ('鈑噴活動贈禮' if '鈑噴' in s else '贈品／精品')
             return big, sub
     return '其他', '未分類'
+NOT_VENDOR = {'預估', '發票', '合約', '調整', '迴轉', '沖回', '補登', '更正'}
 def vendor(s):
-    m = re.search(r'-([\u4e00-\u9fff]{2,6})$', str(s))
-    return m.group(1) if m else ''
-exp = []
-for i, r in e.iterrows():
-    big, sub = classify(r['摘要'])
-    b = str(r['服務廠']).replace('廠', '')
-    exp.append(dict(i=i + 2, t=str(r['費用項目']).replace('廣促費_', ''), b=b if b in BR else HQ,
-                    dr=num(r['借方金額']), cr=num(r['貸方金額']), s=str(r['摘要']),
-                    m=int(str(r['月份']).replace('月', '')), a=num(r['金額']), c1=big, c2=sub, v=vendor(r['摘要'])))
-
-# 費用明細 vs 損益表
-EXP_MAP = {'保養、優惠券': '61179910', '各項活動費用': '61179918'}
-for t, code in EXP_MAP.items():
+    s = str(s).strip()
+    m = re.match(r'^([一-鿿A-Za-z0-9（）()]{2,30}?(?:股份有限公司|有限公司|公司|銀行))', s)
+    if m: return m.group(1)
+    m = re.search(r'-([一-鿿A-Za-z]{2,8})$', s)
+    if m and m.group(1) not in NOT_VENDOR: return m.group(1)
+    return ''
+# 成本中心 → 損益表單位（16 廠依「單位」名稱；其餘依勾稽結果指定）
+CC_MAP = {'20S00': '新莊鈑噴', '28S00': '撫遠鈑噴', '00S10': HQ, '21S00': HQ}
+def unit_of(cc, u):
+    if cc in CC_MAP and CC_MAP[cc] in ENT: return CC_MAP[cc]
+    u = str(u) if isinstance(u, str) else ''
+    if u.endswith('廠') and u[:-1] in BR: return u[:-1]
+    return None
+ALIAS = {'714405': '170', '510321': '51030106', '520321': '52030106'}  # 傳票科目 → 損益表科目（名稱不同、內容相同）
+e['code0'] = e['會計科目'].astype(str); e['code'] = e['code0'].map(lambda c: ALIAS.get(c, c)); e['m'] = e['月份'].astype(str).str.replace('月', '').astype(int)
+e['ent'] = [unit_of(c, u) for c, u in zip(e['成本中心'], e['單位'])]
+e['ent'] = e['ent'].where(e['ent'].apply(lambda x: isinstance(x, str)), None)
+e['outu'] = [('' if isinstance(ent, str) else (u if isinstance(u, str) else f'成本中心 {c}')) for ent, c, u in zip(e['ent'], e['成本中心'], e['單位'])]
+# 科目正負號：損益表費用區的收入類科目（如 4109 銷貨折讓）在明細為負數
+sign = {}
+for code, g in e[e['ent'].notna() & (e['ent'] != HQ)].groupby('code'):
+    if code not in by_code: continue
+    a = by_code[code]; glv = g['金額'].sum()
+    plv = sum(a['v'][ENT.index(u)][m] for u in BR for m in range(NM))
+    sign[code] = -1 if abs(plv + glv) < abs(plv - glv) else 1
+# 勾稽：各單位 × 科目 × 月
+gl = e[e['ent'].notna()].groupby(['code', 'ent', 'm'])['金額'].sum()
+match = tot = 0; acc_unit_bad = {}
+for code in sorted(set(e['code']) & set(by_code)):
+    a = by_code[code]; sg = sign.get(code, 1)
+    for u in BR:
+        bi = ENT.index(u)
+        for mi in range(NM):
+            pv = a['v'][bi][mi]; gv = sg * gl.get((code, u, mi + 1), 0)
+            if abs(pv) < 0.5 and abs(gv) < 0.5: continue
+            tot += 1
+            if abs(pv - gv) <= 1: match += 1
+            else: acc_unit_bad.setdefault((code, u), []).append((mi + 1, pv, gv))
+checks.append(dict(type='費用明細', item=f'各單位×科目×月：損益表 vs 傳票明細 吻合 {match}/{tot}（{match/tot:.1%}）', month=0, book=tot, detail=match, diff=tot - match))
+for (code, u), lst in sorted(acc_unit_bad.items(), key=lambda kv: -sum(abs(p - g) for _, p, g in kv[1])):
     a = by_code[code]
-    for mi in range(NM):
-        for bi, b in enumerate(ENT):
-            s = sum(x['a'] for x in exp if x['t'] == t and x['m'] == mi + 1 and x['b'] == b)
-            d = a['v'][bi][mi] - s
-            if abs(d) > 1:
-                checks.append(dict(type='費用明細', item=f"{code} {a['name']}｜{b}", month=mi + 1, book=a['v'][bi][mi], detail=s, diff=d))
-        s = sum(x['a'] for x in exp if x['t'] == t and x['m'] == mi + 1)
-        checks.append(dict(type='費用明細', item=f"{code} {a['name']}｜服務部合計", month=mi + 1, book=a['svc'][mi], detail=s, diff=a['svc'][mi] - s))
-dc = sum(abs(x['dr'] - x['cr'] - x['a']) for x in exp)
-checks.append(dict(type='借貸', item='借方 − 貸方 = 金額 (4,431 筆)', month=0, book=sum(x['a'] for x in exp), detail=sum(x['dr'] - x['cr'] for x in exp), diff=dc))
+    checks.append(dict(type='費用明細差異', item=f"{code} {a['name']}｜{u}（{'、'.join(str(m) + '月' for m, _, _ in lst)}不符）", month=(lst[0][0] if len(lst) == 1 else 0),
+                       book=sum(p for _, p, _ in lst), detail=sum(g for _, _, g in lst), diff=sum(p - g for _, p, g in lst)))
+# 損益表有金額、但明細無此科目
+for a in accts:
+    if a['id'] in children or a['code'] in set(e['code']): continue
+    t = sum(sum(r) for r in a['v'])
+    if abs(t) > 1: checks.append(dict(type='明細缺科目', item=f"{a['code']} {a['name']}（損益表有金額，傳票明細無此科目）", month=0, book=t, detail=0, diff=t))
+# 明細有、損益表無此科目
+for (code, nm), g in e[e['ent'].notna()].groupby(['code', '會計科目中文']):
+    if code not in by_code and abs(g['金額'].sum()) > 1:
+        checks.append(dict(type='損益表無此科目', item=f"{code} {nm}（傳票明細有金額，損益表無此科目）", month=0, book=0, detail=g['金額'].sum(), diff=-g['金額'].sum()))
+# 範圍外
+for u, g in e[e['ent'].isna()].groupby('outu'):
+    checks.append(dict(type='損益表範圍外', item=f"{u}（{len(g)} 筆，不在服務部損益表各單位欄位中，未納入分析）", month=0, book=0, detail=g['金額'].sum(), diff=0))
+dc = int((e['借方金額'] - e['貸方金額']).abs().sub(e['金額'].abs()).abs().sum())
+checks.append(dict(type='借貸', item=f'|借方 − 貸方| = |金額|（{len(e):,} 筆）', month=0, book=int(e['金額'].abs().sum()), detail=int((e['借方金額'] - e['貸方金額']).abs().sum()), diff=dc))
+
+# 精簡輸出：字串表 + 陣列列
+STR = {}; SL = []
+def si(x):
+    x = '' if x is None or (isinstance(x, float) and pd.isna(x)) else str(x)
+    if x not in STR: STR[x] = len(SL); SL.append(x)
+    return STR[x]
+exp_rows = []
+for i, r in enumerate(e.itertuples(index=False)):
+    code = r.code; s = r.摘要
+    if code in PROMO: c1, c2 = classify(s)
+    else: c1, c2 = '', ''
+    ent = ENT.index(r.ent) if isinstance(r.ent, str) else -1
+    sg = sign.get(code, 1)
+    dt = r.傳票日期
+    exp_rows.append([i + 2, si(code), si(r.會計科目中文 + ('' if r.code0 == code else f'（傳票科目 {r.code0}）')), ent, si(r.outu), int(r.m), (dt.day if not pd.isna(dt) else 0),
+                     int(r.借方金額), int(r.貸方金額), int(sg * r.金額), si(s), si(vendor(s)), si(c1), si(c2), int(r.傳票號碼), si(r.成本中心)])
+exp = exp_rows
+EXP_FIELDS = ['i', 'code', 'acn', 'e', 'ou', 'm', 'd', 'dr', 'cr', 'a', 's', 'v', 'c1', 'c2', 'vno', 'cc']
 
 # ---------- 5. 輸出 ----------
 def r0(x): return round(x)
@@ -232,8 +288,8 @@ out = dict(
     acc=[dict(id=a['id'], c=a['code'], n=a['name'], l=a['lvl'], p=a['parent'], x=a['xrow'],
               v=[[r0(x) for x in row] for row in a['v']], b26=r0(a['b26']), a25=r0(a['a25']), a24=r0(a['a24'])) for a in accts],
     kpi={k: dict(svc=v['svc'], br=v['br'], b26=v['b26'], a25=v['a25']) for k, v in kpis.items()},
-    exp=exp, checks=checks)
-json.dump(out, open(os.path.join(HERE, 'data.json'), 'w', encoding='utf-8'), ensure_ascii=False, separators=(',', ':'))
+    exp=dict(f=EXP_FIELDS, s=SL, rows=exp, alias=ALIAS), checks=checks)
+json.dump(out, open(os.path.join(HERE, 'data.json'), 'w', encoding='utf-8'), ensure_ascii=False, separators=(',', ':'), default=lambda o: o.item() if hasattr(o, 'item') else str(o))
 
 # Excel 資料模型
 pl = []
@@ -251,14 +307,14 @@ for a in accts:
 with pd.ExcelWriter(os.path.join(HERE, '資料模型_服務部損益.xlsx')) as w:
     pd.DataFrame([dict(資料表=n, 說明=d) for n, d in [
         ('Fact_PL', '損益事實表：年度×月份×廠別×科目（Long Format）。服務部本部 = 服務部總表 − 各單位加總'),
-        ('Fact_Expense', '費用明細表：1–8月廣促費流水帳 + AI 摘要分類'),
+        ('Fact_Expense', '費用明細表：1–8月總帳傳票明細（全部會計科目）＋ 單位對應 + 廠商 + 廣促 AI 摘要分類'),
         ('Dim_Account', '會計科目主檔：代碼、層級、上層科目、26預算、25/24實績（年度，服務部層級）'),
         ('Dim_Branch', '廠別主檔'), ('Dim_Date', '日期表'), ('勾稽', '財務數字勾稽結果'),
         ('限制', '2025 無月別/廠別資料；2609–2612 工作表為空白')]]).to_excel(w, sheet_name='資料字典', index=False)
     pd.DataFrame(pl).to_excel(w, sheet_name='Fact_PL', index=False)
-    pd.DataFrame([dict(年度=2026, 月份=x['m'], 廠別=x['b'], 費用大類='廣促費', 費用小類=x['t'], 借方=x['dr'], 貸方=x['cr'],
-                       淨額=x['a'], 原始摘要=x['s'], AI分類=x['c1'], AI子分類=x['c2'], 廠商對象=x['v'],
-                       資料來源=f"2601-08費用表!列{x['i']}") for x in exp]).to_excel(w, sheet_name='Fact_Expense', index=False)
+    pd.DataFrame([dict(年度=2026, 月份=r[5], 傳票號碼=r[14], 傳票日=r[6], 會計科目=SL[r[1]], 科目名稱=SL[r[2]], 成本中心=SL[r[15]],
+                       損益表單位=(ENT[r[3]] if r[3] >= 0 else ''), 範圍外單位=SL[r[4]], 借方=r[7], 貸方=r[8], 淨額_損益方向=r[9],
+                       原始摘要=SL[r[10]], 廠商對象=SL[r[11]], AI分類=SL[r[12]], AI子分類=SL[r[13]], 資料來源=f"2601-08費用表!列{r[0]}") for r in exp]).to_excel(w, sheet_name='Fact_Expense', index=False)
     pd.DataFrame([dict(科目代碼=a['code'], 科目名稱=a['name'], 層級=a['lvl'],
                        上層科目=accts[a['parent']]['name'] if a['parent'] is not None else '',
                        YTD實績=sum(a['svc']), 預算26年=a['b26'], 實績25年=a['a25'], 實績24年=a['a24'], 總表列號=a['xrow']) for a in accts]).to_excel(w, sheet_name='Dim_Account', index=False)
@@ -270,4 +326,4 @@ bad = [c for c in checks if abs(c['diff']) > 1]
 print('accounts', len(accts), 'exp', len(exp), 'checks', len(checks), 'bad', len(bad))
 for c in bad[:40]: print(c)
 import collections
-print(collections.Counter((x['c1'], x['c2']) for x in exp).most_common(40))
+print('exp strings', len(SL)); print([c for c in checks if c['type'] in ('費用明細', '欄位排除', '損益表範圍外', '借貸')])

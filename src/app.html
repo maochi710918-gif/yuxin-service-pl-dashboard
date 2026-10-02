@@ -214,12 +214,9 @@ const wavg=(bs,k)=>{const f=bs.filter(x=>!isBP(x.i)); return f.reduce((s,x)=>s+x
 const bpTag=i=>isBP(i)?' <span class="tag neu">鈑噴中心</span>':'';
 const A=D.acc, byCode={}, kids={};
 A.forEach(a=>{ if(a.c==='90') a.n='零服業務貢獻(邊貢)'; if(!(a.c in byCode)) byCode[a.c]=a; if(a.p!=null)(kids[a.p]=kids[a.p]||[]).push(a.id); });
-const EXPMAP={'61179910':'保養、優惠券','61179918':'各項活動費用'};
 const MN=m=>m+'月';
 const S={m0:1,m1:NM,ents:null,base:'a25',page:'ceo'};
 try{const s=JSON.parse(localStorage.getItem('svcdash-state')||'{}'); if(s.page)S.page=s.page; if(s.base)S.base=s.base;}catch(e){}
-let OVR={}; try{OVR=JSON.parse(localStorage.getItem('svcdash-ovr')||'{}')}catch(e){}
-D.exp.forEach(x=>{ if(OVR[x.i]){x.c1=OVR[x.i][0];x.c2=OVR[x.i][1];} });
 
 const LINES=[
  {k:'rev',c:'100',n:'零服營收',s:1,top:1},
@@ -249,6 +246,19 @@ function leaves(id){const k=kids[id]; if(!k||!k.length) return [id]; return k.fl
 CATS.forEach(c=>{c.ids=c.codes.filter(x=>byCode[x]).map(x=>byCode[x].id); c.leaves=c.ids.flatMap(leaves);});
 const EXP_LEAVES=CATS.flatMap(c=>c.leaves.map(id=>({id,cat:c})));
 const leafCat={}; EXP_LEAVES.forEach(o=>leafCat[o.id]=o.cat);
+/* ---------- 傳票明細（2601-08費用表：總帳全部科目） ---------- */
+const GLX=D.exp, GLS=GLX.s;
+const GL=GLX.rows.map(r=>{ const o={}; GLX.f.forEach((k,j)=>o[k]=r[j]); ['code','acn','ou','s','v','c1','c2','cc'].forEach(k=>o[k]=GLS[o[k]]); o.b=o.e>=0?ENT[o.e]:(o.ou||'範圍外'); o.t=o.acn.replace(/^廣促費_/,'').replace(/（傳票科目.*$/,''); return o; });
+const lineOf=a=>{ let p=a; while(p){ const l=LINES.find(x=>x.c===p.c); if(l) return l.n; p=p.p!=null?A[p.p]:null; } return '其他'; };
+GL.forEach(x=>{ if(!x.c1){ const a=byCode[x.code]; const cat=a&&leafCat[a.id]; x.c1=cat?cat.n:(a?lineOf(a):'損益表無此科目'); x.c2=a?a.n.replace(/^[^_]*_/,''):x.t; } });
+D.exp=GL.filter(x=>x.e>=0);
+const PROMO=D.exp.filter(x=>x.code==='61179910'||x.code==='61179918');
+const isExpRow=x=>{ const a=byCode[x.code]; return !!(a&&leafCat[a.id]); };
+const normS=t=>String(t).replace(/^\s*\d{2,3}[\/.]\d{1,2}(月)?\s*/,'').replace(/\d{2,3}[\/.]\d{1,2}月?/g,'').replace(/\d{1,2}月/g,'').trim();
+const RECUR=(()=>{ const mm={}; D.exp.forEach(x=>{ const k=x.e+'|'+x.code+'|'+normS(x.s); (mm[k]=mm[k]||new Set()).add(x.m); if(x.v){ const kv=x.e+'|'+x.code+'|V:'+x.v.slice(0,2); (mm[kv]=mm[kv]||new Set()).add(x.m); } }); return new Set(Object.entries(mm).filter(([k,v])=>v.size>=4).map(([k])=>k)); })();
+const catOfRow=x=>{ const a=byCode[x.code]; return a?leafCat[a.id]:null; };
+let OVR={}; try{OVR=JSON.parse(localStorage.getItem('svcdash-ovr-gl')||'{}')}catch(e){}
+GL.forEach(x=>{ if(OVR[x.i]){x.c1=OVR[x.i][0];x.c2=OVR[x.i][1];} });
 
 /* ---------- context ---------- */
 const allEnts=()=>ENT.map((_,i)=>i);
@@ -392,10 +402,11 @@ function anomalies(c,th){
     if(a1.rev>a0.rev && a1.op<a0.op && a0.op-a1.op>th.amt) out.push({t:'營收增加但利益下降',e,m,a:null,v:a1.op,base:a0.op,d:a0.op-a1.op,why:`營收 ${SP(gr(a1.rev,a0.rev))}，營業利益 ${SW(a1.op-a0.op)} 萬`});
   }}
   // 大額單筆 & 重複摘要
-  const ex=D.exp.filter(x=>x.m>=c.m0&&x.m<=c.m1&&c.ents.includes(ENT.indexOf(x.b)));
-  ex.forEach(x=>{ if(x.a>th.amt && x.c2!=='各項優惠券(系統)') out.push({t:'特殊大額支出',e:ENT.indexOf(x.b),m:x.m,a:byCode[x.t==='保養、優惠券'?'61179910':'61179918'],v:x.a,base:0,d:x.a,why:esc(x.s),raw:x}); });
-  const g={}; ex.forEach(x=>{ if(x.c2==='各項優惠券(系統)'||x.a<=0) return; const k=x.b+'|'+x.m+'|'+x.s; (g[k]=g[k]||[]).push(x); });
-  Object.values(g).forEach(arr=>{ if(arr.length>=3){ const s=arr.reduce((t,x)=>t+x.a,0); out.push({t:'同一摘要重複出現',e:ENT.indexOf(arr[0].b),m:arr[0].m,a:null,v:s,base:0,d:s,why:`「${esc(arr[0].s)}」同月出現 ${arr.length} 次`}); } });
+  const SKIPK=new Set(['hr','rent','dep']);
+  const ex=D.exp.filter(x=>x.m>=c.m0&&x.m<=c.m1&&c.ents.includes(x.e)&&isExpRow(x)&&!SKIPK.has(catOfRow(x).k));
+  ex.forEach(x=>{ if(x.a>th.amt && x.c2!=='各項優惠券(系統)' && !RECUR.has(x.e+'|'+x.code+'|'+normS(x.s)) && !(x.v&&RECUR.has(x.e+'|'+x.code+'|V:'+x.v.slice(0,2)))) out.push({t:'特殊大額支出',e:x.e,m:x.m,a:byCode[x.code],v:x.a,base:0,d:x.a,why:esc(x.s)+(x.v?`（${esc(x.v)}）`:'')+`｜傳票 ${x.vno}`,raw:x}); });
+  const g={}; ex.forEach(x=>{ if(x.c2==='各項優惠券(系統)'||x.a<5000) return; const k=x.e+'|'+x.m+'|'+x.code+'|'+x.s+'|'+x.a; (g[k]=g[k]||[]).push(x); });
+  Object.values(g).forEach(arr=>{ if(arr.length>=2){ const s=arr.reduce((t,x)=>t+x.a,0); out.push({t:'同摘要同金額重複入帳',e:arr[0].e,m:arr[0].m,a:byCode[arr[0].code],v:s,base:arr[0].a,d:s-arr[0].a,why:`「${esc(arr[0].s)}」${Y(arr[0].a)} 元出現 ${arr.length} 次（傳票 ${[...new Set(arr.map(x=>x.vno))].join('、')}）`,raw:arr[0]}); } });
   return out.sort((x,y)=>y.d-x.d);
 }
 /* 最大影響來源：月份×廠×科目 */
@@ -502,22 +513,25 @@ function nodeAcct(id,ents,m0,m1){ const a=A[id]; return {title:`${a.c} ${a.n}`,b
     return {sub:`${entsLabel(c)}｜${perLabel(c)}｜合計 ${Wu(sumA(a,c))}`,html:barList(rows),rows};
   }
   // 葉節點：若多廠→廠別；若多月→月份；否則原始
-  if(ents.length>1){ const rows=ents.map(e=>({label:entName(e),v:sumA(a,{...c,ents:[e]}),e})).sort((p,q)=>q.v-p.v).map(r=>({...r,next:()=>nodeAcct(id,[r.e],m0,m1)}));
+  const glN=D.exp.filter(x=>x.code===a.c&&x.m>=m0&&x.m<=m1&&ents.includes(x.e)).length;
+  const rawRow={label:`📄 直接看全部原始傳票（${glN} 筆）`,v:sumA(a,c),next:()=>nodeRaw(a,ents,m0,m1)};
+  if(ents.length>1){ const rows=[rawRow,...ents.map(e=>({label:entName(e),v:sumA(a,{...c,ents:[e]}),e})).sort((p,q)=>q.v-p.v).map(r=>({...r,next:()=>nodeAcct(id,[r.e],m0,m1)}))];
     return {sub:'明細科目｜依廠別展開',html:barList(rows),rows}; }
-  if(m1>m0){ const rows=months(c).map(m=>({label:m+'月',v:sumA(a,{...c,m0:m,m1:m}),next:()=>nodeAcct(id,ents,m,m)}));
+  if(m1>m0){ const rows=[rawRow,...months(c).map(m=>({label:m+'月',v:sumA(a,{...c,m0:m,m1:m}),next:()=>nodeAcct(id,ents,m,m)}))];
     return {sub:'明細科目｜依月份展開',html:barList(rows),rows}; }
   return nodeRaw(a,ents,m0,m1).build();
 }};}
-function nodeRaw(a,ents,m0,m1){ return {title:'原始資料',build(){
-  if(EXPMAP[a.c]){ const t=EXPMAP[a.c]; const ex=D.exp.filter(x=>x.t===t&&x.m>=m0&&x.m<=m1&&ents.includes(ENT.indexOf(x.b))).sort((p,q)=>q.a-p.a);
-    return {sub:`來源：2601-08費用表｜${ex.length} 筆｜合計 ${Y(ex.reduce((s,x)=>s+x.a,0))} 元`,html:rawTable(ex.slice(0,300))+(ex.length>300?'<div class="muted">僅顯示前 300 筆，完整清單請至「原始明細」</div>':'')}; }
-  const e=ents[0]; const v=sumA(a,{ents,m0,m1,n:1});
-  const src=ENT[e]===HQ?`服務部 工作表第 ${a.x} 列 ${m0}月欄 − 各單位加總`:`26${String(m0).padStart(2,'0')} 工作表第 ${a.x-2} 列 × 「${ENT[e]}」欄`;
-  return {sub:'',html:`<div class="card"><p><b>${esc(a.c)} ${esc(a.n)}</b>｜${entName(e)}｜${m0}月</p><p class="num" style="font-size:22px;font-weight:650">${Y(v)} 元</p>
-    <p class="muted">資料來源：${src}</p><p class="muted">此科目在 Excel 中沒有費用流水帳（目前只有「廣促費_保養、優惠券」「廣促費_各項活動費用」兩科目有 1–8 月明細），所以只能追到這個科目金額。</p></div>`};
+function nodeRaw(a,ents,m0,m1){ return {title:'原始傳票',build(){
+  const ex=D.exp.filter(x=>x.code===a.c&&x.m>=m0&&x.m<=m1&&ents.includes(x.e)).sort((p,q)=>Math.abs(q.a)-Math.abs(p.a));
+  const pv=sumA(a,{ents,m0,m1}); const gv=ex.reduce((t,x)=>t+x.a,0); const diff=pv-gv;
+  const note=Math.abs(diff)>1?`<div class="banner warn">⚠ 損益表 ${Y(pv)} 元，傳票明細合計 ${Y(gv)} 元，差額 ${Y(diff)} 元${ents.includes(HQI)?'（服務部本部含未入傳票明細的分攤數，只能部分追溯）':''}。數字不調整，請以損益表為準並查核差異。</div>`
+    :`<div class="banner info">✓ 傳票明細合計 ${Y(gv)} 元 = 損益表金額</div>`;
+  if(!ex.length){ const e=ents[0]; const src=ENT[e]===HQ?`服務部 工作表第 ${a.x} 列 − 各單位加總`:`26${String(m0).padStart(2,'0')} 工作表第 ${a.x-2} 列 ×「${ENT[e]}」欄`;
+    return {sub:'',html:note+`<div class="card"><p><b>${esc(a.c)} ${esc(a.n)}</b>｜${ents.map(entName).join('、')}｜${m0===m1?m0+'月':m0+'–'+m1+'月'}</p><p class="num" style="font-size:22px;font-weight:650">${Y(pv)} 元</p><p class="muted">資料來源：${src}</p><p class="muted">傳票明細中沒有此科目 × 單位 × 月份的分錄（可能為分攤或公式計算數）。</p></div>`}; }
+  return {sub:`來源：2601-08費用表（總帳傳票明細）｜${ex.length} 筆｜依金額大小排序`,html:note+rawTable(ex.slice(0,300))+(ex.length>300?'<div class="muted">僅顯示前 300 筆，完整清單請至「原始明細」</div>':'')};
 }};}
-function rawTable(ex){ return `<div class="tbl-wrap"><table><thead><tr><th>月</th><th>廠別</th><th>費用項目</th><th>原始摘要</th><th>AI 分類</th><th class="n">借方</th><th class="n">貸方</th><th class="n">淨額</th><th>來源</th></tr></thead><tbody>${
-  ex.map(x=>`<tr><td>${x.m}</td><td>${esc(x.b)}</td><td>${esc(x.t)}</td><td>${esc(x.s)}</td><td>${esc(x.c1)}<span class="muted"> › ${esc(x.c2)}</span></td><td class="n">${Y(x.dr)}</td><td class="n">${Y(x.cr)}</td><td class="n ${x.a<0?'good-t':''}">${Y(x.a)}</td><td class="muted">列${x.i}</td></tr>`).join('')}</tbody></table></div>`;}
+function rawTable(ex){ return `<div class="tbl-wrap"><table><thead><tr><th>日期</th><th>傳票號碼</th><th>單位</th><th>會計科目</th><th>原始摘要</th><th>廠商／對象</th><th>AI 分類</th><th class="n">借方</th><th class="n">貸方</th><th class="n">淨額</th></tr></thead><tbody>${
+  ex.map(x=>`<tr><td class="muted">${x.m}/${x.d||'—'}</td><td class="muted">${x.vno}</td><td>${esc(x.b)}</td><td>${esc(x.t)} <span class="muted">${x.code}</span></td><td>${esc(x.s)}</td><td>${x.v?`<span class="tag neu">${esc(x.v)}</span>`:''}</td><td>${esc(x.c1)}<span class="muted"> › ${esc(x.c2)}</span></td><td class="n">${Y(x.dr)}</td><td class="n">${Y(x.cr)}</td><td class="n ${x.a<0?'good-t':''}">${Y(x.a)}</td></tr>`).join('')}</tbody></table></div><div class="muted">淨額已依損益表方向（收入、費用皆為正）｜來源列號見「原始明細」</div>`;}
 function drillMetric(mk){ openDrill(nodeMonths(mk)); }
 
 /* ================= Pages ================= */
@@ -573,7 +587,7 @@ function answers(c){
   const decl=bs.filter(x=>x.g.op!=null).sort((x,y)=>x.g.op-y.g.op)[0];
   const ad=acctDeltas(c,b)[0];
   const cats=CATS.map(k=>({k,v:catV(k,c)})).sort((x,y)=>y.v-x.v);
-  const ex=D.exp.filter(x=>x.m>=c.m0&&x.m<=c.m1&&c.ents.includes(ENT.indexOf(x.b)));
+  const ex=PROMO.filter(x=>x.m>=c.m0&&x.m<=c.m1&&c.ents.includes(x.e));
   const gross=ex.filter(x=>x.a>0).reduce((s,x)=>s+x.a,0), offset=ex.filter(x=>x.a<0).reduce((s,x)=>s+x.a,0);
   const cls={}; ex.filter(x=>x.a>0).forEach(x=>cls[x.c2]=(cls[x.c2]||0)+x.a); const topCls=Object.entries(cls).sort((x,y)=>y[1]-x[1]).slice(0,3);
   const an=anomalies(c); const fake=bs.filter(x=>x.g.rev>0&&x.g.op<0);
@@ -589,7 +603,7 @@ function answers(c){
    {q:'哪個廠造成？',a:worstB?`業務貢獻率(邊貢率)最低：<b>${bs.slice().sort((x,y)=>(x.cr||0)-(y.cr||0))[0].b}廠</b> ${P(bs.slice().sort((x,y)=>(x.cr||0)-(y.cr||0))[0].cr)}；利益率最低：<b>${bn(worstB.b)}</b> ${P(worstB.opm)}（利益 ${Wu(worstB.op)}）${decl?`；利益下滑最多：<b>${bn(decl.b)}</b> ${SP(decl.g.op)}（${decl.basis}）`:''}。${closed.length?`<br><span class="warn-t">⚠ ${closed.map(x=>bn(x.b)).join('、')} 最後一個月營收接近 0（疑似撤廠／停業，已排除於排名）</span>`:''}${bpS.length?`<br><span class="muted">鈑噴中心另列（不與服務廠排名）：${bpS.map(x=>`${x.b} 營業利益 ${Wu(x.op)}、業務貢獻(邊貢) ${Wu(x.contrib)}`).join('；')}</span>`:''}`:'—'},
    {q:'哪個會計科目造成？',a:ad?`<b>${esc(ad.a.n)}</b>（${ad.a.c}）較${bl} ${SW(ad.d)} 萬（${Wu(ad.cu)} vs ${Wu(ad.ba)}）。${src?`<br>單點最大：${src.m}月 ${entName(src.e)} ${esc(src.a.n)} ${Wu(src.v)}（高於該廠月均 ${SW(src.d)} 萬）`:''}`:'—'},
    {q:'我的錢到底花去哪裡？',a:`總費用 ${Wu(cu.exp)}：${cats.slice(0,4).map(x=>`${x.k.n} ${Wu(x.v)}（${P(x.v/cu.exp,0)}）`).join('、')}。<a onclick="S.page='money';render()">→ Money Flow</a>`},
-   {q:'廣促費到底花去哪？',a:`外促 ${Wu(cu.ext)}；流水帳總發放 ${Wu(gross)}，會員遞延收益沖回 ${Wu(offset)}。最大用途：${topCls.map(x=>`${esc(x[0])} ${Wu(x[1])}`).join('、')}。`},
+   {q:'廣促費到底花去哪？',a:`外促 ${Wu(cu.ext)}；傳票明細總發放 ${Wu(gross)}，會員遞延收益沖回 ${Wu(offset)}。最大用途：${topCls.map(x=>`${esc(x[0])} ${Wu(x[1])}`).join('、')}。`},
    {q:'哪些支出異常？',a:`共 ${an.length} 項（門檻 20%／10萬）。前三：${an.slice(0,3).map(x=>`${x.m?x.m+'月 ':''}${entName(x.e)} ${x.a?esc(x.a.n):x.t} ${SW(x.d)}萬`).join('；')||'無'}。<a onclick="S.page='radar';render()">→ 異常雷達</a>`},
    {q:'哪些廠「營收看起來很好，但其實沒賺到錢」？',a:fake.length?fake.map(x=>`<b>${x.b}</b>${bpTag(x.i)}（營收 ${SP(x.g.rev)}、利益 ${SP(x.g.op)}）`).join('、')+`<span class="muted">｜${fake[0].basis}</span>`:'本期沒有「營收成長但利益下滑」的廠。'},
    {q:'下一步主管應該處理什麼？',a:actions(c).today[0]||'—'},
@@ -692,7 +706,7 @@ function plantProfile(i){
   const leafs=EXP_LEAVES.map(o=>{const a=A[o.id]; const v=sumA(a,c); const avgR=ratio(sumA(a,cAll),pa.rev); return {a,v,avgR,r:ratio(v,p.rev),ex:v-(avgR||0)*p.rev};});
   const topExp=leafs.slice().sort((x,y)=>y.v-x.v).slice(0,8), over=leafs.filter(x=>x.ex>0).sort((x,y)=>y.ex-x.ex).slice(0,5), under=leafs.filter(x=>x.ex<0).sort((x,y)=>x.ex-y.ex).slice(0,3);
   const an=anomalies({...c}).slice(0,8);
-  const ex=D.exp.filter(x=>x.b===BR[i]&&x.m>=c.m0&&x.m<=c.m1).sort((a,b)=>b.a-a.a).slice(0,10);
+  const ex=D.exp.filter(x=>x.e===i&&x.m>=c.m0&&x.m<=c.m1&&isExpRow(x)&&!['hr','rent','dep'].includes(catOfRow(x).k)).sort((a,b)=>b.a-a.a).slice(0,10);
   const dg=branchDiag(i,c);
   dpanel.innerHTML=`<button class="x" onclick="closeDrawer()">×</button><h1>【${bn(BR[i])}】經營體檢</h1><div class="sub">${perLabel(c)}｜與服務廠平均比較（Excel 無該廠去年資料）${isBP(i)?'｜⚠ 鈑噴中心性質與服務廠不同，比較僅供參考':''}</div>
    <div class="grid g3">${[['營收',Wu(p.rev),''],['毛利率',P(p.gm),dTag(p.gm,pa.gm,1,true)],['★ 零服業務貢獻(邊貢)',Wu(p.contrib),`業務貢獻率(邊貢率) <b>${P(p.cr)}</b> ${dTag(p.cr,pa.cr,1,true)}`],['費用率',P(p.er),dTag(p.er,pa.er,-1,true)],['營業利益',Wu(p.op),`利益率 ${P(p.opm)} ${dTag(p.opm,pa.opm,1,true)}`],['廠平均',`邊貢率 ${P(pa.cr)}`,`利益率 ${P(pa.opm)}`]].map(x=>`<div class="card"><div class="muted">${x[0]}</div><div class="num" style="font-size:22px;font-weight:650">${x[1]}</div><div>${x[2]}</div></div>`).join('')}</div>
@@ -702,7 +716,7 @@ function plantProfile(i){
    <div class="grid g2 mt"><div class="card"><h3>主要費用 Top 8</h3>${topExp.map(x=>`<div class="bar-row" style="grid-template-columns:1fr 90px 70px"><div>${esc(x.a.n)}</div><div class="num" style="text-align:right">${Wu(x.v)}</div><div class="muted" style="text-align:right">${P(x.r)}</div></div>`).join('')}</div>
    <div class="card"><h3>費用率高於廠平均的科目（超支金額）</h3>${over.map(x=>`<div class="bar-row" style="grid-template-columns:1fr 90px 90px"><div>${esc(x.a.n)}</div><div class="muted" style="text-align:right">${P(x.r)} vs ${P(x.avgR)}</div><div class="num bad-t" style="text-align:right">+${W(x.ex)}萬</div></div>`).join('')||'<div class="muted">無</div>'}</div></div>
    <div class="card mt"><h3>異常項目</h3>${anTable(an)}</div>
-   <div class="card mt"><h3>原始費用摘要（廣促費，金額前 10 筆）</h3>${rawTable(ex)}</div>`;
+   <div class="card mt"><h3>原始傳票｜單筆金額前 10 名（費用科目，不含人事／租金／折舊）</h3>${rawTable(ex)}</div>`;
   drawer.classList.add('open','full');
   setTimeout(()=>{ mkChart('pp1',{xAxis:{type:'category',data:ms.map(x=>x.m+'月')},yAxis:wanAxis,series:[{type:'bar',name:'營收',barWidth:'50%',itemStyle:{borderRadius:[4,4,0,0]},data:ms.map(x=>x.rev)}]});
     mkChart('pp2',{xAxis:{type:'category',data:ms.map(x=>x.m+'月')},yAxis:wanAxis,series:[{type:'bar',name:'營業利益',barWidth:'50%',color:css('--s3'),itemStyle:{borderRadius:[4,4,0,0],color:p=>p.value<0?css('--s8'):css('--s3')},data:ms.map(x=>x.op)}]});
@@ -798,13 +812,19 @@ R.exp=el=>{
       inRange:{color:HM==='mom'?[css('--div-pos'),css('--neutral'),css('--div-neg')]:['#cde2fb','#6da7ec','#2a78d6','#184f95','#0d366b']}},
     series:[{type:'heatmap',data,itemStyle:{borderColor:css('--surface'),borderWidth:2},label:{show:true,fontSize:9,formatter:p=>isP?P(p.value[2],0):W(p.value[2]),color:'#fff',textBorderColor:'rgba(0,0,0,.35)',textBorderWidth:2}}]});
   el.querySelectorAll('#hmseg button').forEach(b=>b.onclick=()=>{HM=b.dataset.k;render();});
+  // 廠商／對象（傳票明細）
+  const exr=D.exp.filter(x=>x.m>=c.m0&&x.m<=c.m1&&c.ents.includes(x.e)&&isExpRow(x));
+  const vg={}; exr.forEach(x=>{ if(!x.v) return; const k=x.v; (vg[k]=vg[k]||{v:0,n:0,cats:{}}); vg[k].v+=x.a; vg[k].n++; const cn=catOfRow(x).n; vg[k].cats[cn]=(vg[k].cats[cn]||0)+x.a; });
+  const vt=Object.entries(vg).sort((a,b)=>b[1].v-a[1].v).slice(0,15); const noV=exr.filter(x=>!x.v).reduce((t,x)=>t+x.a,0);
+  el.insertAdjacentHTML('beforeend',`<div class="card mt"><h2>錢付給誰｜廠商／對象 Top 15（傳票明細）</h2>${barList(vt.map(([k,o])=>({label:`${k}（${o.n} 筆｜${Object.entries(o.cats).sort((a,b)=>b[1]-a[1])[0][0]}）`,v:o.v,next:1})))}<div class="muted">廠商由摘要自動擷取（如「…-坤侑」「裕隆日產汽車股份有限公司-…」）；未標示廠商的分錄（薪資、系統分錄等）合計 ${Wu(noV)}｜點廠商看傳票</div></div>`);
+  el.querySelectorAll('.card:last-child .bar-row').forEach((r,i)=>r.onclick=()=>{const k=vt[i][0]; showRawFilter(x=>x.v===k&&isExpRow(x),'廠商：'+k);});
 };
 
 /* 08 廣促 */
 R.promo=el=>{
   const c=ctx(); const {b}=effBase(c); const bl=BASE_LABEL[b];
   const ext=V('140',c), extB=baseV('140',c,b); const ms=months({m0:1,m1:NM});
-  const ex=D.exp.filter(x=>x.m>=c.m0&&x.m<=c.m1&&c.ents.includes(ENT.indexOf(x.b)));
+  const ex=PROMO.filter(x=>x.m>=c.m0&&x.m<=c.m1&&c.ents.includes(x.e));
   const gross=ex.filter(x=>x.a>0).reduce((s,x)=>s+x.a,0), off=ex.filter(x=>x.a<0).reduce((s,x)=>s+x.a,0);
   const monthly=ms.map(m=>V('140',{...c,m0:m,m1:m})); const mx=ms[monthly.indexOf(Math.max(...monthly))];
   const brv=c.ents.filter(e=>e!==HQI).map(e=>({e,v:V('140',{...c,ents:[e]})})).sort((a,b)=>b.v-a.v);
@@ -818,7 +838,7 @@ R.promo=el=>{
    ${kpiCard({l:'最高廠',v:brv[0]?ENT[brv[0].e]:'—',c:brv[0]?Wu(brv[0].v)+'（各廠金額含優惠券毛額；遞延沖回在本部）':''})}</div>
    ${c.all?`<div class="banner info mt">💡 保養優惠券：各廠「毛額」發放 ${Wu(ex.filter(x=>x.t==='保養、優惠券'&&x.a>0).reduce((s,x)=>s+x.a,0))}，服務部本部以「會員遞延收益沖廣促費」沖回 ${Wu(off)} → 損益表淨額 ${Wu(V('61179910',c))}。${byCode['61179910'].b26?`全年預算 ${Wu(byCode['61179910'].b26)}，目前已用 <b>${P(V('61179910',c)/byCode['61179910'].b26,0)}</b>；25年全年 ${Wu(byCode['61179910'].a25)}。`:''}</div>`:''}
    <div class="grid g2 mt"><div class="card"><h2>廣促科目（vs ${bl}）</h2><div class="tbl-wrap"><table><thead><tr><th>科目</th><th class="n">本期</th><th class="n">${bl}</th><th class="n">差額</th><th class="n">占廣促</th></tr></thead><tbody>${subs.map(x=>`<tr class="click" data-id="${x.a.id}"><td>${esc(x.a.n)}</td><td class="n">${W(x.v)}</td><td class="n">${W(x.bv)}</td><td class="n ${x.v>x.bv?'bad-t':'good-t'}">${SW(x.v-x.bv)}</td><td class="n">${P(x.v/ext)}</td></tr>`).join('')}</tbody></table></div><div class="muted">萬元</div></div>
-   <div class="card"><h2>摘要 AI 分類（流水帳毛額）</h2><div class="chart" id="pc"></div></div></div>
+   <div class="card"><h2>摘要 AI 分類（傳票明細毛額）</h2><div class="chart" id="pc"></div></div></div>
    <div class="grid g2 mt"><div class="card"><h2>廣促費｜月</h2><div class="chart sm" id="pm"></div></div><div class="card"><h2>廣促費｜廠別</h2><div class="chart sm" id="pb"></div></div></div>
    <div class="card mt"><h2>廣促費 Top 20（費用類型 × 用途 × 月份 × 廠別）</h2><div class="tbl-wrap" id="pt"></div></div>`);
   el.querySelectorAll('tr[data-id]').forEach(tr=>tr.onclick=()=>openDrill(nodeAcct(+tr.dataset.id,c.ents,c.m0,c.m1)));
@@ -833,14 +853,14 @@ R.promo=el=>{
   document.getElementById('pt').innerHTML=`<table><thead><tr><th>#</th><th>費用類型</th><th>活動／用途</th><th>原始摘要</th><th>月</th><th>廠別</th><th class="n">金額</th><th class="n">占毛額</th><th class="n">YoY</th></tr></thead><tbody>${top.map((x,i)=>`<tr><td>${i+1}</td><td>${esc(x.t)}</td><td>${esc(x.c2)}</td><td>${esc(x.s)}${x.n>1?` <span class="muted">×${x.n}</span>`:''}</td><td>${x.m}</td><td>${esc(x.b)}</td><td class="n">${Y(x.v)}</td><td class="n">${P(x.v/gross)}</td><td class="n muted">無去年明細</td></tr>`).join('')}</tbody></table>`;
 };
 function showRawFilter(fn,title){
-  const c=ctx(); const ex=D.exp.filter(x=>x.m>=c.m0&&x.m<=c.m1&&c.ents.includes(ENT.indexOf(x.b))&&fn(x)).sort((a,b)=>b.a-a.a);
+  const c=ctx(); const ex=D.exp.filter(x=>x.m>=c.m0&&x.m<=c.m1&&c.ents.includes(x.e)&&fn(x)).sort((a,b)=>b.a-a.a);
   openDrill({title,build:()=>({sub:`${ex.length} 筆｜合計 ${Y(ex.reduce((s,x)=>s+x.a,0))} 元`,html:rawTable(ex.slice(0,400))})});
 }
 
 /* 09 活動費 */
 R.act=el=>{
   const c=ctx(); const {b}=effBase(c); const bl=BASE_LABEL[b];
-  const ex=D.exp.filter(x=>x.t==='各項活動費用'&&x.m>=c.m0&&x.m<=c.m1&&c.ents.includes(ENT.indexOf(x.b)));
+  const ex=PROMO.filter(x=>x.t==='各項活動費用'&&x.m>=c.m0&&x.m<=c.m1&&c.ents.includes(x.e));
   const v=V('61179918',c), bv=baseV('61179918',c,b);
   head(el,'活動費分析',`廣促費_各項活動費用（61179918）｜${entsLabel(c)}｜${perLabel(c)}`);
   el.insertAdjacentHTML('beforeend',baseNote(c));
@@ -853,7 +873,7 @@ R.act=el=>{
   <div class="card mt"><h2>明細</h2>${rawTable(ex.sort((a,b)=>b.a-a.a).slice(0,200))}</div>`);
   const ms=months({m0:1,m1:NM}); const us=use.slice(0,6).map(x=>x[0]);
   mkChart('am',{legend:{top:0,textStyle:{color:css('--ink-2'),fontSize:11}},grid:{left:56,right:10,top:40,bottom:30},xAxis:{type:'category',data:ms.map(m=>m+'月')},yAxis:wanAxis,
-    series:us.map(u=>({name:u,type:'bar',stack:'a',barWidth:'55%',itemStyle:{borderColor:css('--surface'),borderWidth:1},data:ms.map(m=>D.exp.filter(x=>x.t==='各項活動費用'&&x.m===m&&x.c2===u&&c.ents.includes(ENT.indexOf(x.b))).reduce((s,x)=>s+x.a,0))}))});
+    series:us.map(u=>({name:u,type:'bar',stack:'a',barWidth:'55%',itemStyle:{borderColor:css('--surface'),borderWidth:1},data:ms.map(m=>PROMO.filter(x=>x.t==='各項活動費用'&&x.m===m&&x.c2===u&&c.ents.includes(x.e)).reduce((s,x)=>s+x.a,0))}))});
 };
 
 /* 10 Money Flow */
@@ -977,18 +997,19 @@ R.radar=el=>{
 let CX={r:'b',c:'m',v:'amt',f:'exp'};
 R.cross=el=>{
   const c=ctx(); head(el,'自由交叉分析',`${entsLabel(c)}｜${perLabel(c)}｜選列、欄、指標，自由組合`);
-  const dims=[['m','月份'],['b','廠別'],['cat','費用大類'],['line','損益科目'],['t','廣促費項目'],['cls','摘要分類'],['vend','廠商／對象']];
+  const dims=[['m','月份'],['b','廠別'],['cat','費用大類'],['line','損益科目'],['t','費用科目（傳票）'],['cls','AI 分類'],['vend','廠商／對象']];
   const sel=(id,v)=>`<select id="${id}" class="pill-in" style="width:auto">${dims.map(d=>`<option value="${d[0]}" ${v===d[0]?'selected':''}>${d[1]}</option>`).join('')}</select>`;
-  el.insertAdjacentHTML('beforeend',`<div class="card" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">列 ${sel('cxr',CX.r)} × 欄 ${sel('cxc',CX.c)} 指標 <select id="cxv" class="pill-in" style="width:auto">${[['amt','金額'],['share','占比'],['er','費用率（÷營收）'],['mom','月增率']].map(o=>`<option value="${o[0]}" ${CX.v===o[0]?'selected':''}>${o[1]}</option>`).join('')}</select><span class="muted">※「廣促費項目／摘要分類／廠商」維度使用費用流水帳；其餘使用損益表</span></div><div class="card mt"><div class="tbl-wrap" id="cxt"></div></div>`);
+  el.insertAdjacentHTML('beforeend',`<div class="card" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">列 ${sel('cxr',CX.r)} × 欄 ${sel('cxc',CX.c)} 指標 <select id="cxv" class="pill-in" style="width:auto">${[['amt','金額'],['share','占比'],['er','費用率（÷營收）'],['mom','月增率']].map(o=>`<option value="${o[0]}" ${CX.v===o[0]?'selected':''}>${o[1]}</option>`).join('')}</select><span class="muted">※「費用科目／AI 分類／廠商」維度使用傳票明細（費用科目，各維度取金額前 20 名）；其餘使用損益表</span></div><div class="card mt"><div class="tbl-wrap" id="cxt"></div></div>`);
   ['cxr','cxc','cxv'].forEach(id=>document.getElementById(id).onchange=()=>{CX={r:cxr.value,c:cxc.value,v:cxv.value}; render();});
   const useExp=['t','cls','vend'].includes(CX.r)||['t','cls','vend'].includes(CX.c);
   const keys=d=>{ if(d==='m') return months(c).map(m=>({k:m,l:m+'月'})); if(d==='b') return c.ents.map(e=>({k:e,l:ENT[e]}));
     if(d==='cat') return CATS.map(k=>({k:k.k,l:k.n})); if(d==='line') return LINES.map(l=>({k:l.k,l:l.n}));
-    const f={t:'t',cls:'c2',vend:'v'}[d]; return [...new Set(D.exp.map(x=>x[f]||'（未標示）'))].map(x=>({k:x,l:x})); };
+    const f={t:'t',cls:'c1',vend:'v'}[d]; const agg={}; D.exp.forEach(x=>{ if(x.m<c.m0||x.m>c.m1||!c.ents.includes(x.e)||!isExpRow(x)) return; const k=x[f]||'（未標示）'; agg[k]=(agg[k]||0)+x.a; });
+    return Object.entries(agg).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).slice(0,20).map(([k])=>({k,l:k})); };
   const rk=keys(CX.r), ck=keys(CX.c);
   const cell=(r,col,cc0)=>{ const cc={...c}; const dims={}; dims[CX.r]=r; dims[CX.c]=col;
     if('m' in dims){cc.m0=cc.m1=dims.m;} if('b' in dims) cc.ents=[dims.b];
-    if(useExp){ const fx=D.exp.filter(x=>x.m>=cc.m0&&x.m<=cc.m1&&cc.ents.includes(ENT.indexOf(x.b))&&(!('t' in dims)||x.t===dims.t)&&(!('cls' in dims)||x.c2===dims.cls)&&(!('vend' in dims)||(x.v||'（未標示）')===dims.vend)&&(!('cat' in dims)||dims.cat==='promo')&&(!('line' in dims)||dims.line==='ext')); return {v:fx.reduce((s,x)=>s+x.a,0),cc}; }
+    if(useExp){ if('line' in dims) return {v:null,cc}; const fx=D.exp.filter(x=>x.m>=cc.m0&&x.m<=cc.m1&&cc.ents.includes(x.e)&&isExpRow(x)&&(!('t' in dims)||x.t===dims.t)&&(!('cls' in dims)||x.c1===dims.cls)&&(!('vend' in dims)||(x.v||'（未標示）')===dims.vend)&&(!('cat' in dims)||catOfRow(x).k===dims.cat)); return {v:fx.reduce((s,x)=>s+x.a,0),cc}; }
     let v; if('cat' in dims&&'line' in dims) v=null; else if('cat' in dims) v=catV(CATS.find(x=>x.k===dims.cat),cc); else if('line' in dims) v=V(LINES.find(l=>l.k===dims.line).c,cc); else v=expTot(cc);
     return {v,cc}; };
   const M=rk.map(r=>ck.map(col=>{ const {v,cc}=cell(r.k,col.k); if(v==null) return null;
@@ -1023,25 +1044,31 @@ R.ai=el=>{
 };
 
 /* 16 原始明細 */
-let RAWQ={q:'',t:'',c:'',p:0};
+let RAWQ={q:'',acc:'',c:'',p:0,scope:'in',kind:'exp'};
 R.raw=el=>{
-  const c=ctx(); head(el,'原始明細｜費用流水帳',`2601-08費用表 4,431 筆｜${entsLabel(c)}｜${perLabel(c)}｜AI 分類可修改（存在本機瀏覽器）`);
-  const C1=[...new Set(D.exp.map(x=>x.c1))];
-  el.insertAdjacentHTML('beforeend',`<div class="card" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><input id="rq" placeholder="搜尋摘要／廠商…" value="${esc(RAWQ.q)}" style="border:1px solid var(--line-2);border-radius:8px;padding:6px 10px;min-width:220px;background:var(--surface)">
-   <select id="rt" class="pill-in" style="width:auto"><option value="">全部項目</option><option ${RAWQ.t==='保養、優惠券'?'selected':''}>保養、優惠券</option><option ${RAWQ.t==='各項活動費用'?'selected':''}>各項活動費用</option></select>
-   <select id="rc" class="pill-in" style="width:auto"><option value="">全部 AI 分類</option>${C1.map(x=>`<option ${RAWQ.c===x?'selected':''}>${x}</option>`).join('')}</select>
+  const c=ctx(); head(el,'原始明細｜總帳傳票',`2601-08費用表 ${Y(GL.length)} 筆（其中 ${Y(D.exp.length)} 筆屬服務部損益表單位）｜${entsLabel(c)}｜${perLabel(c)}｜AI 分類可修改（存在本機瀏覽器）`);
+  const base=()=>(RAWQ.scope==='all'?GL:D.exp).filter(x=>x.m>=c.m0&&x.m<=c.m1&&(x.e<0||c.ents.includes(x.e))&&(RAWQ.kind==='all'||isExpRow(x)));
+  const accs={}; base().forEach(x=>{ (accs[x.code]=accs[x.code]||{n:x.t,v:0}); accs[x.code].v+=x.a; });
+  const accL=Object.entries(accs).sort((a,b)=>Math.abs(b[1].v)-Math.abs(a[1].v));
+  const C1=[...new Set(base().map(x=>x.c1))];
+  el.insertAdjacentHTML('beforeend',`<div class="card" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><input id="rq" placeholder="搜尋摘要／廠商／傳票號碼…" value="${esc(RAWQ.q)}" style="border:1px solid var(--line-2);border-radius:8px;padding:6px 10px;min-width:220px;background:var(--surface)">
+   <select id="rk" class="pill-in" style="width:auto"><option value="exp" ${RAWQ.kind==='exp'?'selected':''}>費用科目</option><option value="all" ${RAWQ.kind==='all'?'selected':''}>全部科目（含收入／成本）</option></select>
+   <select id="rs" class="pill-in" style="width:auto"><option value="in" ${RAWQ.scope==='in'?'selected':''}>損益表單位</option><option value="all" ${RAWQ.scope==='all'?'selected':''}>含範圍外（PDI、車檢線…）</option></select>
+   <select id="ra" class="pill-in" style="width:auto;max-width:280px"><option value="">全部會計科目（${accL.length}）</option>${accL.map(([k,o])=>`<option value="${k}" ${RAWQ.acc===k?'selected':''}>${k} ${esc(o.n)}（${W(o.v)}萬）</option>`).join('')}</select>
+   <select id="rc" class="pill-in" style="width:auto"><option value="">全部 AI 分類</option>${C1.map(x=>`<option ${RAWQ.c===x?'selected':''}>${esc(x)}</option>`).join('')}</select>
    <button class="btn" id="rcsv">匯出 CSV</button><span class="muted" id="rn"></span></div><div class="card mt" id="rtb"></div>`);
-  const f=()=>D.exp.filter(x=>x.m>=c.m0&&x.m<=c.m1&&c.ents.includes(ENT.indexOf(x.b))&&(!RAWQ.t||x.t===RAWQ.t)&&(!RAWQ.c||x.c1===RAWQ.c)&&(!RAWQ.q||(x.s+x.v+x.c2).includes(RAWQ.q)));
-  const draw=()=>{ const ex=f(); const ps=100, pg=Math.min(RAWQ.p,Math.floor(ex.length/ps)); const sl=ex.slice(pg*ps,pg*ps+ps);
-    rn.textContent=`${ex.length} 筆｜合計 ${Y(ex.reduce((s,x)=>s+x.a,0))} 元`;
-    rtb.innerHTML=`<div class="tbl-wrap"><table><thead><tr><th>列</th><th>月</th><th>廠別</th><th>原始分類</th><th>原始摘要</th><th>AI 建議分類</th><th class="n">借方</th><th class="n">貸方</th><th class="n">淨額</th></tr></thead><tbody>${sl.map(x=>`<tr><td class="muted">${x.i}</td><td>${x.m}</td><td>${esc(x.b)}</td><td>${esc(x.t)}</td><td>${esc(x.s)}${x.v?` <span class="tag neu">${esc(x.v)}</span>`:''}</td><td><select data-i="${x.i}" class="pill-in" style="width:auto;font-size:12px">${C1.map(k=>`<option ${k===x.c1?'selected':''}>${k}</option>`).join('')}</select> <span class="muted">${esc(x.c2)}</span>${OVR[x.i]?' <span class="tag warn">已修改</span>':''}</td><td class="n">${Y(x.dr)}</td><td class="n">${Y(x.cr)}</td><td class="n">${Y(x.a)}</td></tr>`).join('')}</tbody></table></div>
+  const f=()=>base().filter(x=>(!RAWQ.acc||x.code===RAWQ.acc)&&(!RAWQ.c||x.c1===RAWQ.c)&&(!RAWQ.q||(x.s+'|'+x.v+'|'+x.c2+'|'+x.vno+'|'+x.t).includes(RAWQ.q)));
+  const draw=()=>{ const ex=f().sort((p,q)=>p.m-q.m||p.d-q.d||p.vno-q.vno); const ps=100, pg=Math.min(RAWQ.p,Math.floor(ex.length/ps)); const sl=ex.slice(pg*ps,pg*ps+ps);
+    rn.textContent=`${Y(ex.length)} 筆｜合計 ${Y(ex.reduce((t,x)=>t+x.a,0))} 元`;
+    rtb.innerHTML=`<div class="tbl-wrap"><table><thead><tr><th>列</th><th>日期</th><th>傳票號碼</th><th>單位</th><th>會計科目</th><th>原始摘要</th><th>AI 建議分類</th><th class="n">借方</th><th class="n">貸方</th><th class="n">淨額</th></tr></thead><tbody>${sl.map(x=>`<tr><td class="muted">${x.i}</td><td>${x.m}/${x.d||'—'}</td><td class="muted">${x.vno}</td><td>${esc(x.b)}${x.e<0?' <span class="tag warn">範圍外</span>':''}</td><td>${esc(x.t)} <span class="muted">${x.code}</span></td><td>${esc(x.s)}${x.v?` <span class="tag neu">${esc(x.v)}</span>`:''}</td><td><select data-i="${x.i}" class="pill-in" style="width:auto;font-size:12px">${[...new Set([x.c1,...C1])].map(k=>`<option ${k===x.c1?'selected':''}>${esc(k)}</option>`).join('')}</select> <span class="muted">${esc(x.c2)}</span>${OVR[x.i]?' <span class="tag warn">已修改</span>':''}</td><td class="n">${Y(x.dr)}</td><td class="n">${Y(x.cr)}</td><td class="n">${Y(x.a)}</td></tr>`).join('')}</tbody></table></div>
     <div class="pager"><button class="btn" id="pp" ${pg<=0?'disabled':''}>‹ 上一頁</button>第 ${pg+1} / ${Math.max(1,Math.ceil(ex.length/ps))} 頁<button class="btn" id="pn" ${(pg+1)*ps>=ex.length?'disabled':''}>下一頁 ›</button></div>`;
-    rtb.querySelectorAll('select[data-i]').forEach(s=>s.onchange=()=>{ const x=D.exp.find(r=>r.i===+s.dataset.i); x.c1=s.value; OVR[x.i]=[x.c1,x.c2]; try{localStorage.setItem('svcdash-ovr',JSON.stringify(OVR))}catch(e){} draw(); });
+    rtb.querySelectorAll('select[data-i]').forEach(sx=>sx.onchange=()=>{ const x=GL.find(r=>r.i===+sx.dataset.i); x.c1=sx.value; OVR[x.i]=[x.c1,x.c2]; try{localStorage.setItem('svcdash-ovr-gl',JSON.stringify(OVR))}catch(e){} draw(); });
     const b1=document.getElementById('pp'), b2=document.getElementById('pn'); b1.onclick=()=>{RAWQ.p=pg-1;draw();}; b2.onclick=()=>{RAWQ.p=pg+1;draw();}; };
-  rq.oninput=()=>{RAWQ.q=rq.value;RAWQ.p=0;draw();}; rt.onchange=()=>{RAWQ.t=rt.value;RAWQ.p=0;draw();}; rc.onchange=()=>{RAWQ.c=rc.value;RAWQ.p=0;draw();};
-  rcsv.onclick=()=>{ const ex=f(); const h=['列','月份','廠別','費用項目','摘要','AI分類','AI子分類','廠商','借方','貸方','金額']; const q=v=>`"${String(v).replace(/"/g,'""')}"`;
-    const csv='﻿'+[h.join(','),...ex.map(x=>[x.i,x.m,x.b,x.t,x.s,x.c1,x.c2,x.v,x.dr,x.cr,x.a].map(q).join(','))].join('\n');
-    const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='費用明細_AI分類.csv'; a.click(); };
+  rq.oninput=()=>{RAWQ.q=rq.value;RAWQ.p=0;draw();}; ra.onchange=()=>{RAWQ.acc=ra.value;RAWQ.p=0;draw();}; rc.onchange=()=>{RAWQ.c=rc.value;RAWQ.p=0;draw();};
+  rk.onchange=()=>{RAWQ.kind=rk.value;RAWQ.acc='';RAWQ.p=0;render();}; rs.onchange=()=>{RAWQ.scope=rs.value;RAWQ.p=0;render();};
+  rcsv.onclick=()=>{ const ex=f(); const h=['列','月份','日','傳票號碼','成本中心','單位','會計科目','科目名稱','摘要','廠商','AI分類','AI子分類','借方','貸方','淨額(損益方向)']; const q=v=>`"${String(v).replace(/"/g,'""')}"`;
+    const csv='﻿'+[h.join(','),...ex.map(x=>[x.i,x.m,x.d,x.vno,x.cc,x.b,x.code,x.t,x.s,x.v,x.c1,x.c2,x.dr,x.cr,x.a].map(q).join(','))].join('\n');
+    const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='傳票明細_AI分類.csv'; a.click(); };
   draw();
 };
 
@@ -1061,7 +1088,10 @@ R.recon=el=>{
      <li><b>去年同期：</b>服務部表只有「25年實績」全年合計，沒有 2025 月別或廠別。YoY 採均攤推估並全站標示；廠別成長改用本年度前後期比較。</li>
      <li><b>預算：</b>只有「26年預算(董)」全年、服務部層級；廠別無預算。</li>
      <li><b>期間：</b>2609–2612 工作表為空白，資料至 ${NM} 月。</li>
-     <li><b>費用流水帳：</b>只有「廣促費_保養、優惠券」與「廣促費_各項活動費用」兩科目，與損益表逐月逐廠完全吻合；其他科目只能穿透到「科目 × 廠 × 月」。</li>
+     <li><b>費用表（1002 版）：</b>改為總帳傳票明細 ${Y(GL.length)} 筆、全部會計科目，所有科目都可穿透到傳票。成本中心對應：16 廠依單位名稱；20S00＝新莊鈑噴、28S00＝撫遠鈑噴（以金額逐科目比對確認）；00S10、21S00＝服務部本部。PDI、車檢線、零服本部、服務管理課、行銷企劃課、日產車技術課不在服務部損益表欄位中，列為「範圍外」不納入分析。</li>
+     <li><b>傳票 vs 損益表：</b>各單位 × 科目 × 月逐格比對，吻合率見下表「費用明細」。唯一不符：<b>撫遠鈑噴 1 月</b>，傳票有約 68.8 萬費用（房屋租金 51.3 萬、運輸設備折舊、油資…）記在撫遠成本中心，但損益表撫遠 1 月費用為 0、這些金額落在服務部本部 → 損益表撫遠 1 月虧損少計約 61 萬。系統不搬移數字，請會計確認。</li>
+     <li><b>科目名稱對應：</b>傳票「下腳收入 714405」＝損益表「週邊業務貢獻 170」；傳票「未休假獎金 510321／520321」＝損益表「週末津貼 51030106／52030106」。服務部本部約一半金額為未入傳票明細的分攤數，只能部分追溯。</li>
+     <li><b>2601 工作表：</b>多一欄「鈑噴」（只有 1 月有），服務項目數字與「新莊鈑噴」相同，未納入以免重複計算。</li>
      <li><b>新增單位（1001 版）：</b>撫遠鈑噴、新莊鈑噴原本包含在「服務部本部」差額中，現在獨立列出；服務部總額不變。兩者為鈑噴中心，計入所有合計，但不納入「服務廠平均」與服務廠排名。撫遠鈑噴 1 月營業利益／稅前淨利儲存格空白，已依公式補算並列於下方勾稽表。</li>
      <li><b>民權廠：</b>7月營收 8.8 萬、8月 0，據點數由 16 降為 15，並有「115/07月執行撤廠通知DC費用」摘要 → 視為停業，排名時排除。</li>
      <li><b>顏色：</b>科目層級依科目代碼、Excel 縮排與加總關係判斷，不使用儲存格顏色。</li></ul></div>
@@ -1108,7 +1138,7 @@ function ask(){
   const P1=pl(cc), P0=plBase(cc,B);
   if(/固定薪|獎金|人事|薪資/.test(q)&&!/廣促|活動費/.test(q)){ ans=`<div class="ai">${hrDiag(cc)}</div>`; src='損益表 160 服務廠固定薪資／150 零服內促費用'; }
   else if(/異常/.test(q)){ const an=anomalies(cc); ans=`<b>${perLabel(cc)} 共 ${an.length} 項異常</b>${anTable(an.slice(0,30))}`; src='損益表 26MM 工作表＋費用表'; }
-  else if(/活動費/.test(q)){ const ex=D.exp.filter(x=>x.t==='各項活動費用'&&x.m>=m0&&x.m<=m1&&cc.ents.includes(ENT.indexOf(x.b))); const g={}; ex.forEach(x=>{g[x.c2+(x.v?'（'+x.v+'）':'')]=(g[x.c2+(x.v?'（'+x.v+'）':'')]||0)+x.a;});
+  else if(/活動費/.test(q)){ const ex=PROMO.filter(x=>x.t==='各項活動費用'&&x.m>=m0&&x.m<=m1&&cc.ents.includes(x.e)); const g={}; ex.forEach(x=>{g[x.c2+(x.v?'（'+x.v+'）':'')]=(g[x.c2+(x.v?'（'+x.v+'）':'')]||0)+x.a;});
     ans=`<b>活動費 ${Wu(V('61179918',cc))}</b>（${BL} ${Wu(baseV('61179918',cc,B))}）。去向：<ul>${Object.entries(g).sort((a,b)=>b[1]-a[1]).slice(0,6).map(x=>`<li>${esc(x[0])}：${Wu(x[1])}</li>`).join('')}</ul>`; src='2601-08費用表（各項活動費用）'; }
   else if(/廣促/.test(q)&&/廠/.test(q)&&/(增加|最多|最高|哪)/.test(q)&&bi<0){ const rows=BR.map((x,i)=>({x,i,v:V('140',{...cc,ents:[i]}),p:null})).sort((a,b)=>b.v-a.v);
     const half=Math.floor(cc.n/2); let rows2=null; if(half) rows2=BR.map((x,i)=>{const a=V('140',{...cc,ents:[i],m0:cc.m1-half+1}),z=V('140',{...cc,ents:[i],m1:cc.m0+half-1}); return {x,d:a-z};}).sort((a,b)=>b.d-a.d);
