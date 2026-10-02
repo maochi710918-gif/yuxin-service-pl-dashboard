@@ -269,7 +269,12 @@ const allEnts=()=>ENT.map((_,i)=>i);
 const effBaseRaw=()=>S.base; const ctxAll=(o={})=>ctx({ents:S.ents||allEnts(),...o});
 const PM=D.meta.pmonths||0; const hasPY=c=>PM>=c.m1&&!!byCode['100'].py;
 function priorRev(ents,m0,m1){ const a=byCode['100']; if(!a.py) return 0; let s=0; for(const e of ents) for(let m=m0-1;m<m1;m++) s+=a.py[e][m]; return s; }
-function openBoth(e,m0,m1){ const a=byCode['100']; if(!a.py) return true; for(let m=m0-1;m<m1;m++){ if(!(a.py[e][m]>0)||!(a.v[e][m]>0)) return false; } return true; }
+/* 併入單位：2025/9 起才屬於本公司（依管理單位提供之事實設定，不由營收推算） */
+const MERGED={承德:9,淡水:9,大安:9,民權:9,濱江:9,北投:9,撫遠鈑噴:9}; const MERGE_Y=2025;
+const joinM=e=>MERGED[ENT[e]]||1; const isMerged=e=>!!MERGED[ENT[e]];
+const mergedTxt=()=>Object.keys(MERGED).join('、')+`（${MERGE_Y}/${Object.values(MERGED)[0]} 併入）`;
+/* 同店：去年該月已在公司（併入月以後），且今年該月仍在營運（營收 > 0，排除停業／未開始營運） */
+function openBoth(e,m0,m1){ if(e===HQI) return true; const a=byCode['100']; if(!a.py) return true; for(let m=m0;m<=m1;m++){ if(m<joinM(e)) return false; if(!(a.v[e][m-1]>0)) return false; } return true; }
 function ssEnts(ents,m0,m1){ return ents.filter(e=>e===HQI||openBoth(e,m0,m1)); }
 function ctx(o={}){ const c={ents:S.ents||allEnts(),m0:S.m0,m1:S.m1,...o}; c.n=c.m1-c.m0+1;
   c.entsAll=c.ents.slice();
@@ -286,8 +291,8 @@ function effBase(c){
   if(b==='b26'&&!c.all){ b=hasPY(c)?'a25':(c.ents.every(e=>e!==HQI)?'avg':'prev'); note=`預算只有服務部層級，已自動改用${BASE_LABEL[b]}`;}
   if(b==='prev'&&c.m0-c.n<1){ b=hasPY(c)?'a25':(c.all?'b26':'avg'); note='所選期間無可比「上期」（資料自1月起），已改用'+BASE_LABEL[b];}
   if(b==='avg'&&c.all){ b='a25'; note='全公司無「廠平均」意義，已改用去年同期';}
-  if(b==='a25'&&c.noPY){ b=c.ents.every(e=>e!==HQI)?'avg':'b26'; note=`所選單位去年同期尚未營運（2025/9 起併入），無法做 YoY，已改用${BASE_LABEL[b]}`; }
-  if(b==='a25'&&!c.ss&&!c.noPY){ const nw=c.ents.filter(e=>e!==HQI&&priorRev([e],c.m0,c.m1)<=0&&sumA(byCode['100'],{...c,ents:[e]})>0); if(nw.length) note=`${nw.map(e=>ENT[e]).join('、')} 去年同期尚未營運（2025/9 起併入），YoY 含新增單位——勾選「同店比較」可排除`; }
+  if(b==='a25'&&c.noPY){ b=c.ents.every(e=>e!==HQI)?'avg':'b26'; note=`所選單位去年同期尚不屬於本公司（${MERGE_Y}/9 併入）或已停業，無法做 YoY，已改用${BASE_LABEL[b]}`; }
+  if(b==='a25'&&!c.ss&&!c.noPY){ const nw=c.ents.filter(e=>e!==HQI&&!openBoth(e,c.m0,c.m1)&&sumA(byCode['100'],{...c,ents:[e]})>0); if(nw.length) note=`${nw.map(e=>ENT[e]).join('、')} 去年同期${nw.some(isMerged)?`尚不屬於本公司（${MERGE_Y}/9 併入）`:'不可比'}，YoY 含這些單位會偏高——請勾選「同店比較」`; }
   return {b,note};
 }
 const BASE_LABEL={a25:'去年同期',b26:'26預算(均攤)',prev:'上期',avg:'服務廠平均'};
@@ -547,7 +552,7 @@ function nodeRaw(a,ents,m0,m1){ return {title:'原始傳票',build(){
   const pyOK=hasPY({m1})&&a.py; const p25=pyOK?sumA(a,{ents,m0,m1,py:true}):0; const g25=ex25.reduce((t,x)=>t+x.a,0);
   const nw=ents.filter(e=>e!==HQI&&!openBoth(e,m0,m1));
   const cmp=pyOK?`<div class="card"><h3>和去年同期比（${m0===m1?m0+'月':m0+'–'+m1+'月'}）</h3><p>今年 <b>${Y(gv)}</b> 元（${ex.length} 筆）｜去年同期 <b>${Y(g25)}</b> 元（${ex25.length} 筆）｜差額 <b class="${gv-g25>0?'bad-t':'good-t'}">${gv-g25>=0?'+':''}${Y(gv-g25)}</b> 元（${g25?SP(gr(gv,g25)):'去年無'}）${Math.abs(p25-g25)>1?`<br><span class="warn-t">⚠ 去年損益表 ${Y(p25)} 元 ≠ 去年傳票 ${Y(g25)} 元</span>`:''}</p>
-     ${nw.length?`<p class="warn-t">⚠ ${nw.map(e=>ENT[e]).join('、')} 去年同期尚未營運，以下差異包含新單位的全部金額。</p>`:''}
+     ${nw.length?`<p class="warn-t">⚠ ${nw.map(e=>ENT[e]).join('、')} 去年同期${nw.some(isMerged)?`尚不屬於本公司（${MERGE_Y}/9 併入）`:'不可比'}，以下差異包含這些單位今年的全部金額，不是成長。</p>`:''}
      <h3 class="mt">差異來源｜依廠商／對象</h3>${diffTable(glDiff(ex,ex25,x=>x.v).slice(0,10),'廠商／對象')}
      <h3 class="mt">差異來源｜依摘要（去掉月份字樣）</h3>${diffTable(glDiff(ex,ex25,x=>normS(x.s)).slice(0,10),'摘要')}</div>`:'';
   const seg=`<div class="seg mt" id="rawy"><button data-y="2026" class="${RAWY===2026?'on':''}">今年傳票（${ex.length}）</button>${pyOK?`<button data-y="2025" class="${RAWY===2025?'on':''}">去年同期傳票（${ex25.length}）</button>`:''}</div>`;
@@ -616,7 +621,7 @@ function growthSource(cA){
 function growthSourceCard(cA){
   const r=growthSource(cA); const meta=r[3]; const L={'100':'營收','90':'零服業務貢獻(邊貢)','500':'營業利益'};
   return `<div class="card mt"><h2>成長來源拆解：同店成長 vs 新併入單位</h2>
-   <div class="muted" style="margin-bottom:8px">${perLabel(cA)}｜同店＝兩年同月份都在營運的 ${meta.ss.filter(e=>e!==HQI).length} 個單位＋本部；新併入＝去年同期尚未營運：${meta.nw.map(e=>ENT[e]).join('、')||'無'}${meta.gone.length?`｜其他不可比：${meta.gone.map(e=>ENT[e]).join('、')}`:''}</div>
+   <div class="muted" style="margin-bottom:8px">${perLabel(cA)}｜同店＝兩年同月份都在營運的 ${meta.ss.filter(e=>e!==HQI).length} 個單位＋本部；新併入＝${MERGE_Y}/9 才併入、去年同期不在公司：${meta.nw.map(e=>ENT[e]).join('、')||'無'}${meta.gone.length?`｜其他不可比：${meta.gone.map(e=>ENT[e]).join('、')}`:''}</div>
    <div class="tbl-wrap"><table><thead><tr><th>項目</th><th class="n">去年同期</th><th class="n">＋同店成長</th><th class="n">同店 YoY</th><th class="n">＋新併入單位</th>${meta.gone.length?'<th class="n">＋其他不可比</th>':''}<th class="n">＝今年（全部）</th><th class="n">表面 YoY（不可直接比）</th></tr></thead><tbody>${r.slice(0,3).map(x=>`<tr><td><b>${L[x.code]}</b></td><td class="n">${W(x.p0)}</td><td class="n ${x.ssD>=0?'good-t':'bad-t'}">${SW(x.ssD)}</td><td class="n"><b>${SP(x.ssG)}</b></td><td class="n">${SW(x.nw)}</td>${meta.gone.length?`<td class="n">${SW(x.gone)}</td>`:''}<td class="n"><b>${W(x.t1)}</b></td><td class="n muted">${SP(gr(x.t1,x.p0))}</td></tr>`).join('')}</tbody></table></div>
    <div class="muted">萬元｜管理判讀請看「同店 YoY」；表面 YoY 把整間新廠算成成長，僅供對照</div></div>`;
 }
@@ -1080,7 +1085,7 @@ R.promo=el=>{
   el.insertAdjacentHTML('beforeend',baseNote(c));
   el.insertAdjacentHTML('beforeend',`<div class="grid g4">
    ${kpiCard({l:`${perTag(c)}廣促費`,v:W(ext)+'<small>萬</small>',tag:dTag(ext,extB,-1),c:`${bl} ${Wu(extB)}｜差 ${SW(ext-extB)} 萬`,click:`openDrill(nodeAcct(${byCode['140'].id},ctx().ents,S.m0,S.m1))`})}
-   ${kpiCard({l:'占營收',v:P(ext/V('100',c)),c:c.all?`25年全年 ${P(byCode['140'].a25/byCode['100'].a25)}`:''})}
+   ${kpiCard({l:'占營收',v:P(ext/V('100',c)),c:c.all?`25年全年 ${P(byCode['140'].a25/byCode['100'].a25)}<br><span class="muted">25年全年只含併入單位 9–12 月</span>`:''})}
    ${kpiCard({l:'最高月份',v:mx+'月',c:`${Wu(Math.max(...monthly))}`})}
    ${kpiCard({l:'最高廠',v:brv[0]?ENT[brv[0].e]:'—',c:brv[0]?Wu(brv[0].v)+'（各廠金額含優惠券毛額；遞延沖回在本部）':''})}</div>
    ${c.all?`<div class="banner info mt">💡 保養優惠券：各廠「毛額」發放 ${Wu(ex.filter(x=>x.t==='保養、優惠券'&&x.a>0).reduce((s,x)=>s+x.a,0))}，服務部本部以「會員遞延收益沖廣促費」沖回 ${Wu(off)} → 損益表淨額 ${Wu(V('61179910',c))}。${byCode['61179910'].b26?`全年預算 ${Wu(byCode['61179910'].b26)}，目前已用 <b>${P(V('61179910',c)/byCode['61179910'].b26,0)}</b>；25年全年 ${Wu(byCode['61179910'].a25)}。`:''}</div>`:''}
@@ -1186,7 +1191,7 @@ R.bridge=el=>{
 };
 function bridgeDetail(it,c,b){
   if(it.k==='new'){ const cA=ctxAll(); const rows=it.ents.map(e=>({label:entName(e),v:pl({...cA,ents:[e]})[BRT]})).sort((x,y)=>y.v-x.v);
-    document.getElementById('wfd').innerHTML=`<h2>${it.n}：${SW(it.v)} 萬</h2><p class="muted">這些單位去年同期尚未營運（或已停業），無法比較；以今年金額直接列出。</p>${barList(rows)}`; return; }
+    document.getElementById('wfd').innerHTML=`<h2>${it.n}：${SW(it.v)} 萬</h2><p class="muted">這些單位去年同期尚不屬於本公司（${MERGE_Y}/9 併入）或已停業，無法比較；以今年金額直接列出。</p>${barList(rows)}`; return; }
   const list=[]; it.codes.forEach(code=>{ const a=byCode[code]; if(!a) return; const ls=leaves(a.id); ls.forEach(id=>{const cu=sumA(A[id],c), ba=baseA(A[id],c,b); if(cu||ba) list.push({a:A[id],cu,ba,d:cu-ba});}); });
   const sign=['vol','bonus','peri'].includes(it.k)?1:-1; list.sort((x,y)=>(x.d-y.d)*sign);
   const bs=(c.entsAll||c.ents).filter(e=>e!==HQI).map(e=>({e,v:it.codes.reduce((s,code)=>s+V(code,{...c,ents:[e]}),0)})).sort((x,y)=>y.v-x.v);
@@ -1211,7 +1216,7 @@ R.yoy=el=>{
     const a25=r.cat?r.cat.ids.reduce((s,id)=>s+A[id].a25,0):r.a.a25, b26=r.cat?r.cat.ids.reduce((s,id)=>s+A[id].b26,0):r.a.b26;
     return `<tr class="${r.top?'lv1':''}"><td>${r.n}</td><td class="n">${W(cu)}</td><td class="n">${W(b1)}</td><td class="n ${(cu-b1)*r.s>=0?'good-t':'bad-t'}">${SW(cu-b1)}</td><td class="n">${SP(gr(cu,b1))}</td><td class="n">${P(cu/V('100',c))}</td>${B2?`<td class="n">${W(cuA)}</td><td class="n">${W(b2)}</td><td class="n">${P(ratio(cuA,b2),0)}</td><td class="n">${W(a25)}</td><td class="n">${W(b26)}</td><td class="n">${P(ratio(cuA,b26),0)}</td>`:''}</tr>`;}).join('')}</tbody></table></div>${(()=>{const p1=pl(c),p0=plBase(c,B1),p2=B2?plBase(c,B2):null,a=k=>ratio(byCode[k].a25,byCode['100'].a25),bb=k=>ratio(byCode[k].b26,byCode['100'].b26);
     return `<h3 class="mt">比率</h3><table><thead><tr><th>比率</th><th class="n">今年</th><th class="n">${BASE_LABEL[B1]}</th><th class="n">差異</th>${B2?'<th class="n">25全年</th><th class="n">26預算</th><th class="n">vs 預算</th>':''}</tr></thead><tbody>${[['毛利率','gm','120'],['★ 零服業務貢獻率(邊貢率)','cr','90'],['營業利益率','opm','500'],['費用率','er',null]].map(([n,k,code])=>`<tr class="${k==='cr'?'lv1':''}"><td>${n}</td><td class="n">${P(p1[k])}</td><td class="n">${P(p0[k])}</td><td class="n ${((p1[k]-p0[k])*(k==='er'?-1:1))>=0?'good-t':'bad-t'}">${pp(p1[k]-p0[k])}</td>${B2?`<td class="n">${code?P(a(code)):P(p0.er)}</td><td class="n">${code?P(bb(code)):P(p2.er)}</td><td class="n">${pp(p1[k]-p2[k])}</td>`:''}</tr>`).join('')}</tbody></table>`;})()}
-  <div class="muted">萬元｜全年進度＝今年累計 ÷ 26年全年預算（${c.n}/12 = ${P(c.n/12,0)} 為時間進度）</div></div>`);
+  <div class="muted">萬元｜全年進度＝今年累計 ÷ 26年全年預算（${c.n}/12 = ${P(c.n/12,0)} 為時間進度）｜25全年＝2025 全年實績，承德等 7 個併入單位只含 2025/9–12，與今年不可直接比</div></div>`);
   // 成長品質
   const cu=pl(c), ba=plBase(c,B1);
   const g={rev:gr(cu.rev,ba.rev),gp:gr(cu.gp,ba.gp),exp:gr(cu.exp,ba.exp),op:gr(cu.op,ba.op)};
@@ -1340,11 +1345,12 @@ R.recon=el=>{
       const kk=leaves(a.id).map(id=>({a:A[id],v:sumA(A[id],hq)})).filter(x=>Math.abs(x.v)>1).sort((x,y)=>Math.abs(y.v)-Math.abs(x.v)).slice(0,3);
       return `<tr><td>${a.c} ${esc(a.n)}</td><td class="n">${Y(t)}</td><td class="n">${Y(s)}</td><td class="n ${Math.abs(d)>1?'warn-t':''}">${Y(d)}</td><td class="n">${P(ratio(d,t))}</td><td class="muted">${kk.map(x=>`${esc(x.a.n)} ${W(x.v)}萬`).join('、')}</td></tr>`;}).join('')}</tbody></table></div></div>
    <div class="card mt"><h2>資料限制（影響分析範圍）</h2><ul>
-     <li><b>去年同期（1002-1 版起）：</b>使用「2025服務部」與 2501–2512 工作表的實際月別 × 單位 × 科目數字；2025 月別合計與 2026 表「25年實績」逐項吻合。承德、淡水、大安、民權、濱江、北投 2025/9 起併入、撫遠鈑噴 2025/10 起，之前月份為 0 → 請用「同店比較」看可比成長。</li>
+     <li><b>去年同期（1002-1 版起）：</b>使用「2025服務部」與 2501–2512 工作表的實際月別 × 單位 × 科目數字；2025 月別合計與 2026 表「25年實績」逐項吻合。承德、淡水、大安、民權、濱江、北投、撫遠鈑噴 2025/9 併入，2025/1–8 月在 Excel 為 0（當時不屬於本公司），不可當成去年基準。</li>
      <li><b>預算：</b>只有「26年預算(董)」全年、服務部層級；廠別無預算。</li>
      <li><b>期間：</b>2609–2612 工作表為空白，資料至 ${NM} 月。</li>
      <li><b>費用表（1002 版）：</b>改為總帳傳票明細 ${Y(GL.length)} 筆、全部會計科目，所有科目都可穿透到傳票。成本中心對應：16 廠依單位名稱；20S00＝新莊鈑噴、28S00＝撫遠鈑噴（以金額逐科目比對確認）；00S10、21S00＝服務部本部。PDI、車檢線、零服本部、服務管理課、行銷企劃課、日產車技術課不在服務部損益表欄位中，列為「範圍外」不納入分析。</li>
      <li><b>傳票 vs 損益表：</b>各單位 × 科目 × 月逐格比對，吻合率見下表「費用明細」。唯一不符：<b>撫遠鈑噴 1 月</b>，傳票有約 68.8 萬費用（房屋租金 51.3 萬、運輸設備折舊、油資…）記在撫遠成本中心，但損益表撫遠 1 月費用為 0、這些金額落在服務部本部 → 損益表撫遠 1 月虧損少計約 61 萬。系統不搬移數字，請會計確認。</li>
+     <li><b>併入單位規則：</b>${mergedTxt()}。① 「去年同期」比較只用同店：該單位在比較期間每個月去年都已併入、今年仍在營運；② 併入前月份不視為衰退或成長；③ 只選併入單位時改用服務廠平均比較；④ 金額（今年多少）照常含全部單位，並在首頁「成長來源拆解」分開列示「同店成長」與「新併入單位」；⑤「25年全年實績」只含這 7 個單位 2025/9–12 的 4 個月，與 2026 全年不可直接比。撫遠鈑噴 2025/9 營收為 0，但依併入日期視為 9 月已併入。</li>
      <li><b>2025 費用表（1002-2 版）：</b>2025 全年總帳傳票 ${Y(GL.filter(x=>x.y===2025).length)} 筆，與 2025 損益表各單位×科目×月比對吻合率見下表「費用明細(2025)」。唯一不符：<b>2025/12「出國獎勵金(間接)」</b>傳票與損益表在各廠間的分配不同（各廠差額互相抵銷、合計相同），請會計確認以哪一份分配為準。21S00 在 2025 表標示為「GTR廠」，與 2026 相同歸入服務部本部。</li>
      <li><b>科目名稱對應：</b>傳票「下腳收入 714405」＝損益表「週邊業務貢獻 170」；傳票「未休假獎金 510321／520321」＝損益表「週末津貼 51030106／52030106」。服務部本部約一半金額為未入傳票明細的分攤數，只能部分追溯。</li>
      <li><b>2601 工作表：</b>多一欄「鈑噴」（只有 1 月有），服務項目數字與「新莊鈑噴」相同，未納入以免重複計算。</li>
