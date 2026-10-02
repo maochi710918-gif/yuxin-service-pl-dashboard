@@ -189,11 +189,12 @@ tr.lv1 td{font-weight:600}
       </div>
     </div>
     <div class="fg">比較基準 <select id="fBase">
-      <option value="a25">去年同期（25年均攤推估）</option>
+      <option value="a25">去年同期（2025 實際）</option>
       <option value="b26">26年預算（均攤）</option>
       <option value="prev">上期（實際）</option>
       <option value="avg">服務廠平均（實際）</option>
     </select></div>
+    <label class="fg" title="只比較去年同期也有營運的單位"><input type="checkbox" id="fSS"> 同店比較</label>
     <button class="btn pri" onclick="boardMode()">董事會模式</button>
     <button class="btn" onclick="plantMode()">廠長模式</button>
     <div class="ask"><input id="askIn" placeholder="直接問我的損益：例如「哪些廠業務貢獻率(邊貢率)最低？」"><button class="btn" onclick="ask()">問</button></div>
@@ -216,7 +217,7 @@ const A=D.acc, byCode={}, kids={};
 A.forEach(a=>{ if(a.c==='90') a.n='零服業務貢獻(邊貢)'; if(!(a.c in byCode)) byCode[a.c]=a; if(a.p!=null)(kids[a.p]=kids[a.p]||[]).push(a.id); });
 const MN=m=>m+'月';
 const S={m0:1,m1:NM,ents:null,base:'a25',page:'ceo'};
-try{const s=JSON.parse(localStorage.getItem('svcdash-state')||'{}'); if(s.page)S.page=s.page; if(s.base)S.base=s.base;}catch(e){}
+try{const s=JSON.parse(localStorage.getItem('svcdash-state')||'{}'); if(s.page)S.page=s.page; if(s.base)S.base=s.base; if(s.ss)S.ss=true;}catch(e){}
 
 const LINES=[
  {k:'rev',c:'100',n:'零服營收',s:1,top:1},
@@ -262,24 +263,31 @@ GL.forEach(x=>{ if(OVR[x.i]){x.c1=OVR[x.i][0];x.c2=OVR[x.i][1];} });
 
 /* ---------- context ---------- */
 const allEnts=()=>ENT.map((_,i)=>i);
-function ctx(o={}){const c={ents:S.ents||allEnts(),m0:S.m0,m1:S.m1,...o}; c.n=c.m1-c.m0+1; c.all=c.ents.length===ENT.length; return c;}
-function sumA(a,c){ if(typeof a==='string') a=byCode[a]; if(!a) return 0; let s=0; for(const e of c.ents){const r=a.v[e]; for(let m=c.m0-1;m<c.m1;m++) s+=r[m];} return s;}
+const PM=D.meta.pmonths||0; const hasPY=c=>PM>=c.m1&&!!byCode['100'].py;
+function priorRev(ents,m0,m1){ const a=byCode['100']; if(!a.py) return 0; let s=0; for(const e of ents) for(let m=m0-1;m<m1;m++) s+=a.py[e][m]; return s; }
+function ssEnts(ents,m0,m1){ return ents.filter(e=>e===HQI||priorRev([e],m0,m1)>0); }
+function ctx(o={}){ const c={ents:S.ents||allEnts(),m0:S.m0,m1:S.m1,...o}; c.n=c.m1-c.m0+1;
+  if(S.ss&&!o.ents&&hasPY(c)){ const k=ssEnts(c.ents,c.m0,c.m1); c.ssOut=c.ents.filter(e=>!k.includes(e)); c.ents=k; c.ss=true; }
+  c.all=c.ents.length===ENT.length; return c; }
+function sumA(a,c){ if(typeof a==='string') a=byCode[a]; if(!a) return 0; const src=c.py?a.py:a.v; if(!src) return 0; let s=0; for(const e of c.ents){const r=src[e]; for(let m=c.m0-1;m<c.m1;m++) s+=r[m];} return s;}
 const V=(code,c)=>sumA(byCode[code],c);
 function catV(cat,c){return cat.ids.reduce((s,id)=>s+sumA(A[id],c),0);}
 function expTot(c){return CATS.reduce((s,k)=>s+catV(k,c),0);}
 /* 比較基準 */
 function effBase(c){
   let b=S.base, note='';
-  if((b==='a25'||b==='b26')&&!c.all){ b=(c.ents.every(e=>e!==HQI))?'avg':'prev'; note=`所選廠別無「${b==='avg'?'':''}去年／預算」廠別資料，已自動改用${b==='avg'?'服務廠平均':'上期'}`;}
-  if(b==='prev'&&c.m0-c.n<1){ b=c.all?'a25':'avg'; note='所選期間無可比「上期」（資料自1月起），已改用'+(b==='a25'?'25年均攤':'服務廠平均');}
-  if(b==='avg'&&c.all){ b='a25'; note='全公司無「廠平均」意義，已改用25年均攤';}
+  if(b==='a25'&&!hasPY(c)){ b=c.all?'b26':'avg'; note='無去年同期月別資料，已改用'+BASE_LABEL[b]; }
+  if(b==='b26'&&!c.all){ b=hasPY(c)?'a25':(c.ents.every(e=>e!==HQI)?'avg':'prev'); note=`預算只有服務部層級，已自動改用${BASE_LABEL[b]}`;}
+  if(b==='prev'&&c.m0-c.n<1){ b=hasPY(c)?'a25':(c.all?'b26':'avg'); note='所選期間無可比「上期」（資料自1月起），已改用'+BASE_LABEL[b];}
+  if(b==='avg'&&c.all){ b='a25'; note='全公司無「廠平均」意義，已改用去年同期';}
+  if(b==='a25'&&!c.ss){ const nw=c.ents.filter(e=>e!==HQI&&priorRev([e],c.m0,c.m1)<=0&&sumA(byCode['100'],{...c,ents:[e]})>0); if(nw.length) note=`${nw.map(e=>ENT[e]).join('、')} 去年同期尚未營運（2025/9 起併入），YoY 含新增單位——勾選「同店比較」可排除`; }
   return {b,note};
 }
-const BASE_LABEL={a25:'25年同期(均攤推估)',b26:'26預算(均攤)',prev:'上期',avg:'服務廠平均'};
+const BASE_LABEL={a25:'去年同期',b26:'26預算(均攤)',prev:'上期',avg:'服務廠平均'};
 function baseA(a,c,b){
   if(typeof a==='string') a=byCode[a]; if(!a) return 0;
   b=b||effBase(c).b;
-  if(b==='a25') return a.a25*c.n/12;
+  if(b==='a25') return sumA(a,{...c,py:true});
   if(b==='b26') return a.b26*c.n/12;
   if(b==='prev') return sumA(a,{...c,m0:c.m0-c.n,m1:c.m0-1});
   if(b==='avg'){ const t=sumA(a,{...c,ents:SVCI}); return t/SVCI.length*c.ents.filter(e=>e!==HQI).length; }
@@ -362,17 +370,12 @@ function bridge(c,b,t='op'){
 }
 /* 廠別表 */
 function branchStats(c){
-  const half=c.n>=2?Math.floor(c.n/2):0;
-  const prevAvail=c.m0-c.n>=1;
   return BR.map((b,i)=>{
-    const cc={...c,ents:[i]}; const p=pl(cc);
-    let pc, basis;
-    if(prevAvail){ pc={...cc,m0:c.m0-c.n,m1:c.m0-1}; basis='vs 上期'; }
-    else if(half){ pc={...cc,m1:c.m0+half-1}; cc.m0x=c.m0+c.n-half; basis=`${c.m0+c.n-half}–${c.m1}月 vs ${c.m0}–${c.m0+half-1}月`; }
-    let g={rev:null,op:null,contrib:null,exp:null};
-    if(pc){ const cur=prevAvail?p:pl({...cc,m0:c.m0+c.n-half}); const pv=pl(pc); g={rev:gr(cur.rev,pv.rev),op:gr(cur.op,pv.op),contrib:gr(cur.contrib,pv.contrib),exp:gr(cur.exp,pv.exp),opmD:(cur.opm||0)-(pv.opm||0),crD:(cur.cr||0)-(pv.cr||0)}; }
+    const cc={...c,ents:[i]}; const p=pl(cc); const gp=growthPair(cc);
+    let g={rev:null,op:null,contrib:null,exp:null}, basis=hasPY(c)?'vs 去年同期':(gp?gp.label:'');
+    if(gp){ const cur=pl(gp.cur), pv=pl(gp.base); g={rev:gr(cur.rev,pv.rev),op:gr(cur.op,pv.op),contrib:gr(cur.contrib,pv.contrib),exp:gr(cur.exp,pv.exp),opmD:(cur.opm||0)-(pv.opm||0),crD:(cur.cr||0)-(pv.cr||0)}; }
     const last=V('100',{...cc,m0:c.m1,m1:c.m1}); const avgm=V('100',{...cc,m0:1,m1:NM})/NM;
-    return {i,b,...p,g,basis,closed:last<avgm*0.1};
+    return {i,b,...p,g,basis,closed:last<avgm*0.1,isNew:hasPY(c)&&!gp};
   });
 }
 function monthStats(c){ return months(c).map(m=>({m,...pl({...c,m0:m,m1:m})})); }
@@ -393,6 +396,8 @@ function anomalies(c,th){
       }
     }
   }
+  // 較去年同月大增
+  if(hasPY(c)) for(const e of c.ents){ for(const a of accs){ if(!a.py) continue; for(let m=c.m0;m<=c.m1;m++){ const v=a.v[e][m-1], pv=a.py[e][m-1]; if(pv>0&&v-pv>th.amt&&(v-pv)/pv>th.pct) out.push({t:'較去年同月大增',e,m,a,v,base:pv,d:v-pv,why:`2025/${m} ${W(pv)} 萬 → ${W(v)} 萬（${SP((v-pv)/pv)}）`}); } } }
   // 費用率 vs 廠平均
   const bs=branchStats(c); const avgEr=wavg(bs,'exp');
   bs.forEach(x=>{ if(!c.ents.includes(x.i)||x.closed||isBP(x.i)) return; if(x.er-avgEr>th.pp) out.push({t:'費用率高於廠平均',e:x.i,m:null,a:null,v:x.exp,base:avgEr*x.rev,d:x.exp-avgEr*x.rev,why:`費用率 ${P(x.er)} vs 廠平均 ${P(avgEr)}（${pp(x.er-avgEr)}）`}); });
@@ -435,6 +440,7 @@ function buildFilters(){
   fM0.onchange=()=>{S.m0=+fM0.value; if(S.m1<S.m0){S.m1=S.m0;fM1.value=S.m1;} render();};
   fM1.onchange=()=>{S.m1=+fM1.value; if(S.m0>S.m1){S.m0=S.m1;fM0.value=S.m0;} render();};
   fBase.onchange=()=>{S.base=fBase.value; render();};
+  fSS.checked=!!S.ss; fSS.onchange=()=>{S.ss=fSS.checked; render();};
   const Q=[['單月',()=>[NM,NM]],['Q1',()=>[1,3]],['Q2',()=>[4,6]],['H1',()=>[1,6]],['YTD',()=>[1,NM]]];
   quick.innerHTML=Q.map((q,i)=>`<button data-i="${i}">${q[0]}</button>`).join('');
   quick.querySelectorAll('button').forEach(b=>b.onclick=()=>{const [a,z]=Q[+b.dataset.i][1](); S.m0=a;S.m1=z;fM0.value=a;fM1.value=z;render();});
@@ -447,13 +453,13 @@ function buildFilters(){
   askIn.onkeydown=e=>{if(e.key==='Enter')ask();};
 }
 function syncTop(){
-  const c=ctx(); brbtn.textContent=entsLabel(c);
+  const c=ctx(); brbtn.textContent=entsLabel(c)+(c.ss?'（同店）':'');
   quick.querySelectorAll('button').forEach((b,i)=>{const r=[[NM,NM],[1,3],[4,6],[1,6],[1,NM]][i]; b.classList.toggle('on',S.m0===r[0]&&S.m1===r[1]);});
   const {note}=effBase(c); notice.style.display=note?'block':'none'; notice.textContent=note?'⚠ '+note:'';
 }
 function render(){
   charts.forEach(c=>c.dispose()); charts=[];
-  try{localStorage.setItem('svcdash-state',JSON.stringify({page:S.page,base:S.base}))}catch(e){}
+  try{localStorage.setItem('svcdash-state',JSON.stringify({page:S.page,base:S.base,ss:S.ss}))}catch(e){}
   buildNav(); syncTop();
   const el=document.getElementById('page'); el.innerHTML=''; window.scrollTo(0,0);
   (R[S.page]||R.ceo)(el);
@@ -538,7 +544,9 @@ function drillMetric(mk){ openDrill(nodeMonths(mk)); }
 /* ================= Pages ================= */
 const R={};
 function head(el,t,sub){ el.insertAdjacentHTML('beforeend',`<h1>${t}</h1><div class="sub">${sub}</div>`); }
-function baseNote(c){ const {b}=effBase(c); return b==='a25'?`<div class="banner warn">⚠ Excel 只有 2025「全年合計」（服務部層級），沒有 2025 月別與廠別數字。「去年同期」＝25年實績 ÷ 12 × ${c.n}，是均攤推估，不含季節性（例如 2 月春節）；結論請看方向，不要當精確值。</div>`:''; }
+function baseNote(c){ const {b}=effBase(c); if(b!=='a25') return '';
+  const ssTxt=c.ss?`<b>同店比較中</b>：已排除去年同期未營運的 ${c.ssOut&&c.ssOut.length?c.ssOut.map(e=>ENT[e]).join('、'):'單位'}。`:(()=>{ const all=ctx({ents:S.ents||allEnts()}); const k=ssEnts(all.ents,all.m0,all.m1); const out=all.ents.filter(e=>!k.includes(e)); if(!out.length) return ''; const r1=V('100',{...all,ents:k}), r0=sumA(byCode['100'],{...all,ents:k,py:true}); return `⚠ ${out.map(e=>ENT[e]).join('、')} 於 2025/9 起併入，去年同期無數字；含這些單位的 YoY 會偏高。<b>同店營收 YoY ${SP(gr(r1,r0))}</b>（勾選上方「同店比較」切換）。`; })();
+  return `<div class="banner info">📅 去年同期＝2025 年同月份實際數（2025服務部、2501–2512 工作表）。${ssTxt}</div>`; }
 function kpiCard(o){ return `<div class="card kpi" onclick="${o.click||''}"><div class="l"><span>${o.l}</span>${o.tag||''}</div><div class="v">${o.v}</div><div class="c">${o.c||''}</div></div>`; }
 
 /* 01 CEO */
@@ -567,7 +575,7 @@ R.ceo=el=>{
      <div class="card"><h2>損益變動前三大原因（vs ${bl}）</h2>${bridge(c,b).items.slice().sort((x,y)=>Math.abs(y.v)-Math.abs(x.v)).slice(0,5).map(x=>`<div class="bar-row" style="grid-template-columns:1fr 110px" onclick="S.page='bridge';render()"><div>${x.n}</div><div class="num ${x.v>=0?'good-t':'bad-t'}" style="text-align:right">${SW(x.v)} 萬</div></div>`).join('')}</div>
    </div></div>`);
   const ms=monthStats(c);
-  const refLine=(code)=>c.all?[{name:'25年月均',type:'line',data:ms.map(()=>byCode[code].a25/12),symbol:'none',lineStyle:{type:'dashed',width:1.5},color:css('--ink-3')},{name:'26預算月均',type:'line',data:ms.map(()=>byCode[code].b26/12),symbol:'none',lineStyle:{type:'dotted',width:1.5},color:css('--s2')}]:[];
+  const refLine=(code)=>[...(hasPY(c)?[{name:'2025 同月',type:'line',data:ms.map(x=>sumA(byCode[code],{...c,m0:x.m,m1:x.m,py:true})),symbolSize:5,lineStyle:{type:'dashed',width:1.5},color:css('--ink-3')}]:[]),...(c.all?[{name:'26預算月均',type:'line',data:ms.map(()=>byCode[code].b26/12),symbol:'none',lineStyle:{type:'dotted',width:1.5},color:css('--s2')}]:[])];
   mkChart('c1',{legend:{top:0,right:0,textStyle:{color:css('--ink-2'),fontSize:11}},xAxis:{type:'category',data:ms.map(x=>x.m+'月')},yAxis:wanAxis,series:[{name:'營收',type:'bar',barWidth:'45%',itemStyle:{borderRadius:[4,4,0,0]},data:ms.map(x=>x.rev)},...refLine('100')]});
   mkChart('c2',{legend:{top:0,right:0,textStyle:{color:css('--ink-2'),fontSize:11}},xAxis:{type:'category',data:ms.map(x=>x.m+'月')},yAxis:wanAxis,
     tooltip:{trigger:'axis',formatter:p=>{const m=ms[p[0].dataIndex]; return `${m.m}月<br>營業利益 ${Wu(m.op)}<br>利益率 ${P(m.opm)}`;}},
@@ -597,7 +605,7 @@ function answers(c){
   const up=cu.op>=ba.op;
   return [
    {q:'今年到底賺多少？',a:`${perLabel(c)} 零服業務貢獻(邊貢) <b>${Wu(cu.contrib)}</b>（業務貢獻率(邊貢率) <b>${P(cu.cr)}</b>，${bl} ${P(ba.cr)}）；營業利益 <b>${Wu(cu.op)}</b>，利益率 ${P(cu.opm)}；稅前淨利 ${Wu(cu.pbt)}。`},
-   {q:`比${bl}多賺還是少賺？`,a:`<b class="${up?'good-t':'bad-t'}">${up?'多賺':'少賺'}</b>（${bl} ${Wu(ba.op)}）。${b==='a25'?'<span class="muted">※均攤推估</span>':''}`},
+   {q:`比${bl}多賺還是少賺？`,a:`<b class="${up?'good-t':'bad-t'}">${up?'多賺':'少賺'}</b>（${bl} ${Wu(ba.op)}）。${c.ss?'<span class="muted">（同店）</span>':''}`},
    {q:'差異多少？',a:`營業利益 <b>${SW(cu.op-ba.op)} 萬</b>（${SP(gr(cu.op,ba.op))}）；零服業務貢獻(邊貢) <b>${SW(cu.contrib-ba.contrib)} 萬</b>（${SP(gr(cu.contrib,ba.contrib))}）；營收 ${SP(gr(cu.rev,ba.rev))}、費用 ${SP(gr(cu.exp,ba.exp))}。`},
    {q:'為什麼？',a:`拉低：${neg.map(x=>`${x.n} ${SW(x.v)}萬`).join('、')||'無'}；推升：${pos.map(x=>`${x.n} ${SW(x.v)}萬`).join('、')||'無'}。`},
    {q:'哪個月份造成？',a:worstM?`<b>${worstM.m}月</b> 利益率最低 ${P(worstM.opm)}（期間平均 ${P(avgOpm)}），營業利益 ${Wu(worstM.op)}；業務貢獻率(邊貢率) ${P(worstM.cr)}（期間平均 ${P(cu.cr)}）。`:'—'},
@@ -652,7 +660,7 @@ R.trend=el=>{
     <span class="seg" id="trseg">${opts.map(o=>`<button data-k="${o[0]}" class="${TRM===o[0]?'on':''}">${o[1]}</button>`).join('')}</span>
     <input list="acclist" id="accin" placeholder="或輸入會計科目代碼／名稱…" style="border:1px solid var(--line-2);border-radius:8px;padding:5px 10px;min-width:260px;background:var(--surface)">
     <datalist id="acclist">${A.map(a=>`<option value="${a.c} ${esc(a.n)}">`).join('')}</datalist></div>
-    <div class="chart tall" id="tc"></div><div class="muted">虛線＝25年月均、點線＝26預算月均（僅全公司、金額指標）。</div></div>
+    <div class="chart tall" id="tc"></div><div class="muted">虛線＝2025 同月實際、點線＝26預算月均（僅全公司、金額指標）。</div></div>
     <div class="card mt"><h2>廠別 × 月份</h2><div class="tbl-wrap" id="tt"></div></div>`);
   const isAcc=TRM.startsWith('#'); const acc=isAcc?A[+TRM.slice(1)]:null;
   const f=(cc)=>{ if(acc) return sumA(acc,cc); const p=pl(cc); return p[TRM]; };
@@ -661,7 +669,8 @@ R.trend=el=>{
   const data=ms.map(m=>f({...c,m0:m,m1:m}));
   const refCode=acc?acc.c:{rev:'100',gp:'120',contrib:'90',op:'500'}[TRM];
   const series=[{name:acc?acc.n:opts.find(o=>o[0]===TRM)[1],type:'line',data,symbolSize:8,lineStyle:{width:2},areaStyle:{opacity:.06}}];
-  if(c.all&&refCode&&byCode[refCode]){ series.push({name:'25年月均',type:'line',symbol:'none',lineStyle:{type:'dashed',width:1.5},color:css('--ink-3'),data:ms.map(()=>byCode[refCode].a25/12)}); series.push({name:'26預算月均',type:'line',symbol:'none',lineStyle:{type:'dotted',width:1.5},color:css('--s2'),data:ms.map(()=>byCode[refCode].b26/12)}); }
+  if(hasPY(c)){ const pf=cc=>{ if(acc) return sumA(acc,{...cc,py:true}); const p=pl({...cc,py:true}); return p[TRM]; }; series.push({name:'2025 同月',type:'line',symbolSize:5,lineStyle:{type:'dashed',width:1.5},color:css('--ink-3'),data:ms.map(m=>pf({...c,m0:m,m1:m}))}); }
+  if(c.all&&refCode&&byCode[refCode]){ series.push({name:'26預算月均',type:'line',symbol:'none',lineStyle:{type:'dotted',width:1.5},color:css('--s2'),data:ms.map(()=>byCode[refCode].b26/12)}); }
   mkChart('tc',{legend:{top:0,right:0,textStyle:{color:css('--ink-2')}},xAxis:{type:'category',data:ms.map(m=>m+'月')},yAxis:isPct?pctAxis:wanAxis,
     tooltip:{trigger:'axis',valueFormatter:v=>isPct?P(v):Wu(v)},series});
   const ents=c.ents; const rows=ents.map(e=>`<tr><td>${entName(e)}</td>${ms.map(m=>`<td class="n">${isPct?P(f({...c,ents:[e],m0:m,m1:m})):W(f({...c,ents:[e],m0:m,m1:m}))}</td>`).join('')}<td class="n"><b>${isPct?P(f({...c,ents:[e],m0:1,m1:NM})):W(f({...c,ents:[e],m0:1,m1:NM}))}</b></td></tr>`).join('');
@@ -674,7 +683,7 @@ R.trend=el=>{
 let BSORT={k:'contrib',d:-1}, RKM='cr';
 const BRP_OV=el=>{
   const c=ctx(); const bs=branchStats(c).filter(x=>c.ents.includes(x.i)); const tot=bs.reduce((s,x)=>s+x.op,0);
-  el.insertAdjacentHTML('beforeend',`<div class="muted" style="margin:4px 0 10px">成長率基準：${bs[0]?bs[0].basis||'—':'—'}（Excel 無 2025 廠別資料，改用本年度前後期比較）</div>`);
+  el.insertAdjacentHTML('beforeend',`<div class="muted" style="margin:4px 0 10px">成長率基準：${bs[0]?bs[0].basis||'—':'—'}${hasPY(c)?'（2025 同月實際；「—」＝去年同期尚未營運）':''}</div>`);
   const cols=[['b','廠別'],['rev','營收'],['grev','營收成長'],['gm','毛利率'],['contrib','業務貢獻(邊貢)'],['cr','業務貢獻率(邊貢率)'],['gcontrib','邊貢成長'],['exp','費用'],['er','費用率'],['op','營業利益'],['opm','利益率'],['gop','利益成長'],['share','利益占比']];
   const val=(x,k)=>k==='grev'?x.g.rev:k==='gop'?x.g.op:k==='gcontrib'?x.g.contrib:k==='share'?x.op/tot:x[k];
   bs.sort((p,q)=>{const a=val(p,BSORT.k),b=val(q,BSORT.k); return (typeof a==='string'?a.localeCompare(b):(a??-1e18)-(b??-1e18))*BSORT.d;});
@@ -705,7 +714,7 @@ const BRTABS=[['ov','總覽排行'],['card','各廠體質卡'],['gap','差異拆
 let BRTAB='ov', VSA=null, VSB=null, BTRM='cr';
 const GAPI=[['gm','毛利率','120',1],['bon','原廠補助','130',1],['ext','外促（廣促）','140',-1],['int','內促（績效獎金）','150',-1],['fix','固定薪資','160',-1],
   ['asset','資產使用（租金／折舊／修繕）','49010',-1],['ind','間接人事','49020',-1],['adm','事務費用','49030',-1],['peri','週邊業務','170',1]];
-const kpiSum=(k,e,c)=>e===HQI?0:D.kpi[k].br[e].slice(c.m0-1,c.m1).reduce((a,b)=>a+b,0);
+const kpiSum=(k,e,c)=>{ const K=c.py?D.kpi[k].py:D.kpi[k]; return e===HQI||!K?0:K.br[e].slice(c.m0-1,c.m1).reduce((a,b)=>a+b,0); };
 function plantRow(i,c){
   const cc={...c,ents:[i]}; const p=pl(cc); const r=p.rev||0;
   const o={i,b:BR[i],bp:isBP(i),rev:r,gp:p.gp,contrib:p.contrib,op:p.op,exp:p.exp,gm:p.gm,cr:p.cr,opm:p.opm,er:p.er};
@@ -753,7 +762,7 @@ function branchSummary(S_,c){
    <p>綜合評分第一：<b>${hi.b}</b>（邊貢率 ${P(hi.cr)}、人均營收 ${W(hi.perHead)} 萬／人月）；最後：<b>${lo.b}</b>（邊貢率 ${P(lo.cr)}、人均營收 ${W(lo.perHead)} 萬／人月）。</p>
    <p>各廠「差在哪裡」：差異最大的前三項是 <b>${disp.slice(0,3).map(x=>x.n).join('、')}</b>（以占營收比率的離散程度衡量）——管理上應優先統一這幾項。</p>
    <p>${sv[0]&&sv[0].gLabel?`動能（${sv[0].gLabel} 邊貢）：成長 ${up.length?up.join('、'):'無'}；轉弱 ${down.length?`<span class="bad-t">${down.join('、')}</span>`:'無'}。`:''}</p>
-   <p class="muted">評分＝邊貢率 35% + 營業利益率 20% + 人均營收 15% + 邊貢動能 15% + 費用率（反向）15%，以各廠 z 分數加權；A＝前 25%，D＝後 25%。鈑噴中心與停業廠不評分。</p></div>`;
+   <p class="muted">評分＝邊貢率 35% + 營業利益率 20% + 人均營收 15% + 邊貢 YoY 15% + 費用率（反向）15%，以各廠 z 分數加權；A＝前 25%，D＝後 25%。鈑噴中心與停業廠不評分。</p></div>`;
 }
 R.branch=el=>{
   const c=ctx(); const S_=plantSet(c);
@@ -773,7 +782,7 @@ BRP.card=(el,c,S_)=>{
     return `<div class="card kpi" data-pi="${x.i}"><div class="l"><span><b style="font-size:15px;color:var(--ink)">${bn(x.b)}</b>${x.bp?' <span class="tag neu">鈑噴中心</span>':''}${x.closed?' <span class="tag warn">末月營收≈0</span>':''}</span>${x.grade?`<span>${gradeTag(x.grade)} <span class="muted">第 ${x.rank} 名</span></span>`:''}</div>
      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px 10px;margin:8px 0;font-size:12.5px">
       <div><div class="muted">營收</div><b class="num">${W(x.rev)}萬</b></div><div><div class="muted">邊貢率</div><b class="num ${x.cr<avg.cr-.02?'bad-t':x.cr>avg.cr+.02?'good-t':''}">${P(x.cr)}</b></div><div><div class="muted">利益率</div><b class="num ${x.opm<avg.opm-.02?'bad-t':''}">${P(x.opm)}</b></div>
-      <div><div class="muted">人均營收/月</div><b class="num">${x.perHead?W(x.perHead)+'萬':'—'}</b></div><div><div class="muted">每台營收</div><b class="num">${x.perCar?Y(x.perCar):'—'}</b></div><div><div class="muted">邊貢動能</div><b class="num ${x.gCon<0?'bad-t':'good-t'}">${SP(x.gCon)}</b></div></div>
+      <div><div class="muted">人均營收/月</div><b class="num">${x.perHead?W(x.perHead)+'萬':'—'}</b></div><div><div class="muted">每台營收</div><b class="num">${x.perCar?Y(x.perCar):'—'}</b></div><div><div class="muted">邊貢 YoY</div><b class="num ${x.gCon<0?'bad-t':'good-t'}">${SP(x.gCon)}</b></div></div>
      <div style="font-size:12.5px">${st.pos.length?`<div class="good-t">▲ 優於平均：${st.pos.map(o=>`${o.n} ${(o.v*100).toFixed(1)}pp`).join('、')}</div>`:''}${st.neg.length?`<div class="bad-t">▼ 落後平均：${st.neg.map(o=>`${o.n} ${(o.v*100).toFixed(1)}pp`).join('、')}</div>`:''}</div></div>`;}).join('')}</div>
    <div class="muted">pp＝占營收比率與服務廠平均的差距（百分點），正值＝對利益有利｜點卡片看該廠完整體檢</div>`);
 };
@@ -844,13 +853,13 @@ BRP.trend=(el,c,S_)=>{
 };
 /* 兩廠對標 */
 BRP.vs=(el,c,S_)=>{
-  const {rows,avg}=S_; const live=rows.filter(x=>!x.closed); if(VSA==null||!live.find(x=>x.i===VSA)) VSA=S_.ord[0]?S_.ord[0].i:live[0].i; if(VSB==null||!live.find(x=>x.i===VSB)) VSB=S_.ord.length?S_.ord[S_.ord.length-1].i:live[1].i;
+  const {rows,avg}=S_; const live=rows.filter(x=>!x.closed); if(live.length<2){ el.insertAdjacentHTML('beforeend','<div class="card mt muted">兩廠對標需要至少 2 個營運中的單位，請在上方「廠別」多選幾個廠或選「全部」。</div>'); return; } if(VSA==null||!live.find(x=>x.i===VSA)) VSA=S_.ord[0]?S_.ord[0].i:live[0].i; if(VSB==null||!live.find(x=>x.i===VSB)) VSB=S_.ord.length?S_.ord[S_.ord.length-1].i:live[1].i;
   if(VSA===VSB){ const alt=S_.ord.slice().reverse().find(x=>x.i!==VSA)||live.find(x=>x.i!==VSA); if(alt) VSB=alt.i; }
   const A_=rows.find(x=>x.i===VSA), B_=rows.find(x=>x.i===VSB);
   const sel=(id,v)=>`<select id="${id}" class="pill-in" style="width:auto">${live.map(x=>`<option value="${x.i}" ${x.i===v?'selected':''}>${bn(x.b)}</option>`).join('')}</select>`;
   const L=[['營收','rev',v=>Wu(v),0],['毛利率','gm',P,1],['★ 邊貢率','cr',P,1],['營業利益率','opm',P,1],['費用率','er',P,-1],
     ...GAPI.filter(g=>g[0]!=='gm').map(([k,n,,sg])=>[n+'（占營收）','r_'+k,P,sg]),
-    ['進廠台數','cars',Y,0],['每台營收','perCar',Y,1],['人均營收(萬/人月)','perHead',v=>W(v),1],['直接人員人均營收','perTech',v=>W(v),1],['工資占營收','labor',P,1],['零件一般毛利率','partGM',P,1],['人事成本率','hrR',P,-1],['租金率','rentR',P,-1],['邊貢動能','gCon',SP,1]];
+    ['進廠台數','cars',Y,0],['每台營收','perCar',Y,1],['人均營收(萬/人月)','perHead',v=>W(v),1],['直接人員人均營收','perTech',v=>W(v),1],['工資占營收','labor',P,1],['零件一般毛利率','partGM',P,1],['人事成本率','hrR',P,-1],['租金率','rentR',P,-1],['邊貢 YoY','gCon',SP,1]];
   const gaps=GAPI.map(([k,n,,sg])=>({n,d:sg*((A_['r_'+k]||0)-(B_['r_'+k]||0))})).sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
   const dOp=(A_.opm||0)-(B_.opm||0);
   el.insertAdjacentHTML('beforeend',`<div class="card mt" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">對標 ${sel('vsa',VSA)} vs ${sel('vsb',VSB)} <span class="muted">預設＝綜合評分第一名 vs 最後一名</span></div>
@@ -907,7 +916,7 @@ function plantProfile(i){
   const an=anomalies({...c}).slice(0,8);
   const ex=D.exp.filter(x=>x.e===i&&x.m>=c.m0&&x.m<=c.m1&&isExpRow(x)&&!['hr','rent','dep'].includes(catOfRow(x).k)).sort((a,b)=>b.a-a.a).slice(0,10);
   const dg=branchDiag(i,c);
-  dpanel.innerHTML=`<button class="x" onclick="closeDrawer()">×</button><h1>【${bn(BR[i])}】經營體檢</h1><div class="sub">${perLabel(c)}｜與服務廠平均比較（Excel 無該廠去年資料）${isBP(i)?'｜⚠ 鈑噴中心性質與服務廠不同，比較僅供參考':''}</div>
+  dpanel.innerHTML=`<button class="x" onclick="closeDrawer()">×</button><h1>【${bn(BR[i])}】經營體檢</h1><div class="sub">${perLabel(c)}｜與服務廠平均、去年同期比較${isBP(i)?'｜⚠ 鈑噴中心性質與服務廠不同，比較僅供參考':''}</div>
    <div class="grid g3">${[['營收',Wu(p.rev),''],['毛利率',P(p.gm),dTag(p.gm,pa.gm,1,true)],['★ 零服業務貢獻(邊貢)',Wu(p.contrib),`業務貢獻率(邊貢率) <b>${P(p.cr)}</b> ${dTag(p.cr,pa.cr,1,true)}`],['費用率',P(p.er),dTag(p.er,pa.er,-1,true)],['營業利益',Wu(p.op),`利益率 ${P(p.opm)} ${dTag(p.opm,pa.opm,1,true)}`],['廠平均',`邊貢率 ${P(pa.cr)}`,`利益率 ${P(pa.opm)}`]].map(x=>`<div class="card"><div class="muted">${x[0]}</div><div class="num" style="font-size:22px;font-weight:650">${x[1]}</div><div>${x[2]}</div></div>`).join('')}</div>
    <div class="grid g2 mt"><div class="card"><h3>1–${NM}月 營收</h3><div class="chart sm" id="pp1"></div></div><div class="card"><h3>1–${NM}月 零服業務貢獻(邊貢)（標籤＝邊貢率）</h3><div class="chart sm" id="pp3"></div></div></div>
    <div class="grid g2 mt"><div class="card"><h3>1–${NM}月 營業利益</h3><div class="chart sm" id="pp2"></div></div><div class="card"><h3>業務貢獻率(邊貢率) vs 廠平均｜月</h3><div class="chart sm" id="pp4"></div></div></div>
@@ -957,7 +966,7 @@ R.rev=el=>{
   const K=D.kpi['保修進廠台數']; const cars=c.ents.reduce((s,e)=>s+(e===HQI?0:K.br[e].slice(c.m0-1,c.m1).reduce((a,b)=>a+b,0)),0);
   const p=pl(c);
   el.insertAdjacentHTML('beforeend',`<div class="grid g4">${parts.slice(0,4).map(x=>kpiCard({l:x[1],v:W(V(x[0],c))+'<small>萬</small>',c:`占營收 ${P(V(x[0],c)/p.rev)}`,click:`openDrill(nodeAcct(${byCode[x[0]].id},ctx().ents,S.m0,S.m1))`})).join('')}</div>
-   <div class="grid g4 mt">${kpiCard({l:'保修進廠台數',v:Y(cars)+'<small>台</small>',c:c.all?`25年月均 ${Y(K.a25/12)}｜本期月均 ${Y(cars/c.n)}`:''})}${kpiCard({l:'每台營收',v:Y(p.rev/cars)+'<small>元</small>',c:'零服營收 ÷ 保修進廠台數（不含本部外販）'})}${kpiCard({l:'零件外販',v:W(V('410804',c))+'<small>萬</small>',c:'全數在服務部本部，不分廠'})}${kpiCard({l:'工資收入占比',v:P(V('4111',c)/p.rev),c:'服務工資收入 ÷ 零服營收'})}</div>
+   <div class="grid g4 mt">${kpiCard({l:'保修進廠台數',v:Y(cars)+'<small>台</small>',c:K.py?`去年同期 ${Y(c.ents.reduce((s,e)=>s+(e===HQI?0:K.py.br[e].slice(c.m0-1,c.m1).reduce((a,b)=>a+b,0)),0))} 台｜本期月均 ${Y(cars/c.n)}`:''})}${kpiCard({l:'每台營收',v:Y(p.rev/cars)+'<small>元</small>',c:'零服營收 ÷ 保修進廠台數（不含本部外販）'})}${kpiCard({l:'零件外販',v:W(V('410804',c))+'<small>萬</small>',c:'全數在服務部本部，不分廠'})}${kpiCard({l:'工資收入占比',v:P(V('4111',c)/p.rev),c:'服務工資收入 ÷ 零服營收'})}</div>
    <div class="grid g2 mt"><div class="card"><h2>營收結構｜月</h2><div class="chart" id="r1"></div></div><div class="card"><h2>各廠每台營收 × 進廠台數</h2><div class="tbl-wrap" id="r2"></div></div></div>`);
   const ser=parts.map(p=>({name:p[1],type:'bar',stack:'a',barWidth:'55%',itemStyle:{borderColor:css('--surface'),borderWidth:1},data:ms.map(m=>V(p[0],{...c,m0:m,m1:m}))}));
   ser.push({name:'其他',type:'bar',stack:'a',color:css('--ink-3'),data:ms.map(other)});
@@ -1145,10 +1154,9 @@ function bridgeDetail(it,c,b){
 /* 12 同期比較 */
 R.yoy=el=>{
   const c=ctx(); head(el,'同期比較 × 營收成長品質',`${entsLabel(c)}｜${perLabel(c)}`);
-  if(!c.all){ el.insertAdjacentHTML('beforeend',`<div class="banner warn">⚠ 去年與預算只有服務部層級資料，請把廠別切回「全部」再看本頁。下方改用「上期／服務廠平均」。</div>`); }
+  if(!c.all) el.insertAdjacentHTML('beforeend',`<div class="banner info">預算只有服務部層級；所選單位只顯示「去年同期」比較。</div>`);
   el.insertAdjacentHTML('beforeend',baseNote({...c,n:c.n}).replace('','')||'');
-  if(c.all&&S.base!=='a25') el.insertAdjacentHTML('beforeend',`<div class="banner warn">⚠ 25年只有全年合計；本頁「25年同期」＝25年 ÷ 12 × ${c.n}（均攤推估）。</div>`);
-  const B1=c.all?'a25':effBase(c).b, B2=c.all?'b26':null;
+  const B1=hasPY(c)?'a25':effBase(c).b, B2=c.all?'b26':null;
   const rows=[...LINES.map(l=>({n:l.n,a:byCode[l.c],s:l.s,top:l.top||l.k==='contrib'})),{n:'—— 費用大類 ——'},...CATS.map(k=>({n:k.n,cat:k,s:-1}))];
   const val=(r,f)=>r.cat?f(r.cat):f(r.a);
   el.insertAdjacentHTML('beforeend',`<div class="card"><div class="tbl-wrap"><table><thead><tr><th>項目</th><th class="n">今年</th><th class="n">${BASE_LABEL[B1]}</th><th class="n">差額</th><th class="n">YoY%</th><th class="n">占營收</th>${B2?'<th class="n">26預算(均攤)</th><th class="n">預算達成</th><th class="n">25全年</th><th class="n">26全年預算</th><th class="n">全年進度</th>':''}</tr></thead><tbody>${rows.map(r=>{ if(!r.a&&!r.cat) return `<tr><td colspan="11" class="muted">${r.n}</td></tr>`;
@@ -1284,7 +1292,7 @@ R.recon=el=>{
       const kk=leaves(a.id).map(id=>({a:A[id],v:sumA(A[id],hq)})).filter(x=>Math.abs(x.v)>1).sort((x,y)=>Math.abs(y.v)-Math.abs(x.v)).slice(0,3);
       return `<tr><td>${a.c} ${esc(a.n)}</td><td class="n">${Y(t)}</td><td class="n">${Y(s)}</td><td class="n ${Math.abs(d)>1?'warn-t':''}">${Y(d)}</td><td class="n">${P(ratio(d,t))}</td><td class="muted">${kk.map(x=>`${esc(x.a.n)} ${W(x.v)}萬`).join('、')}</td></tr>`;}).join('')}</tbody></table></div></div>
    <div class="card mt"><h2>資料限制（影響分析範圍）</h2><ul>
-     <li><b>去年同期：</b>服務部表只有「25年實績」全年合計，沒有 2025 月別或廠別。YoY 採均攤推估並全站標示；廠別成長改用本年度前後期比較。</li>
+     <li><b>去年同期（1002-1 版起）：</b>使用「2025服務部」與 2501–2512 工作表的實際月別 × 單位 × 科目數字；2025 月別合計與 2026 表「25年實績」逐項吻合。承德、淡水、大安、民權、濱江、北投 2025/9 起併入、撫遠鈑噴 2025/10 起，之前月份為 0 → 請用「同店比較」看可比成長。</li>
      <li><b>預算：</b>只有「26年預算(董)」全年、服務部層級；廠別無預算。</li>
      <li><b>期間：</b>2609–2612 工作表為空白，資料至 ${NM} 月。</li>
      <li><b>費用表（1002 版）：</b>改為總帳傳票明細 ${Y(GL.length)} 筆、全部會計科目，所有科目都可穿透到傳票。成本中心對應：16 廠依單位名稱；20S00＝新莊鈑噴、28S00＝撫遠鈑噴（以金額逐科目比對確認）；00S10、21S00＝服務部本部。PDI、車檢線、零服本部、服務管理課、行銷企劃課、日產車技術課不在服務部損益表欄位中，列為「範圍外」不納入分析。</li>
@@ -1307,7 +1315,7 @@ function boardMode(){
   const ext=V('140',c), coup=V('61179910',c), act=V('61179918',c);
   const run=cu.op/NM*12; const act3=actions(c);
   dpanel.innerHTML=`<button class="x" onclick="closeDrawer()">×</button><div class="board"><div class="muted">Executive Summary｜服務部｜2026/1–${NM}月｜資料：${D.meta.src}</div><h1>董事會報告</h1>
-   <div class="banner warn">「去年同期」＝25年全年 ÷ 12 × ${NM}（Excel 無 2025 月別資料），請看方向。</div>
+   <div class="banner info">「去年同期」＝2025 年 1–${NM} 月實際數。${(()=>{ const k=ssEnts(allEnts(),1,NM); const r1=V('100',{...c,ents:k}), r0=sumA(byCode['100'],{...c,ents:k,py:true}), o1=V('500',{...c,ents:k}), o0=sumA(byCode['500'],{...c,ents:k,py:true}); return `含 2025/9 起併入的 6 廠；<b>同店（${k.length-1} 個去年即營運的單位＋本部）營收 ${SP(gr(r1,r0))}、營業利益 ${SP(gr(o1,o0))}</b>。`; })()}</div>
    ${[
     ['YTD 營收',`<b>${Wu(cu.rev)}</b>；25年同期(推估) ${Wu(ba.rev)}（${SP(gr(cu.rev,ba.rev))}）；預算均攤達成 ${P(cu.rev/b26.rev,0)}`],
     ['YTD 零服業務貢獻(邊貢)',`<b>${Wu(cu.contrib)}</b>，業務貢獻率(邊貢率) <b>${P(cu.cr)}</b>（25年 ${P(ba.cr)}、26預算 ${P(b26.cr)}）；預算均攤達成 ${P(cu.contrib/b26.contrib,0)}`],
@@ -1354,7 +1362,7 @@ function ask(){
     ans=`<b>${entsLabel(cc)} ${perLabel(cc)} 零服業務貢獻(邊貢) ${Wu(P1.contrib)}，業務貢獻率(邊貢率) ${P(P1.cr)}</b>；${BL} ${Wu(P0.contrib)}（${P(P0.cr)}），差 ${SW(P1.contrib-P0.contrib)} 萬（${pp((P1.cr||0)-(P0.cr||0))}）。${bi<0?`<br>邊貢率最低：${bs.slice(0,3).map(x=>`${x.b} ${P(x.cr)}`).join('、')}；最高：${bs.slice(-3).reverse().map(x=>`${x.b} ${P(x.cr)}`).join('、')}（服務廠）${bps.length?`<br><span class="muted">鈑噴中心另列：${bps.map(x=>`${x.b} 邊貢 ${Wu(x.contrib)}`).join('、')}</span>`:''}`:''}`; src='損益表 90 零服業務貢獻(邊貢) ÷ 100 零服營收'; }
   else if(/(賺|利益|營收)/.test(q)){ ans=`<b>${entsLabel(cc)} ${perLabel(cc)}：營收 ${Wu(P1.rev)}、營業利益 ${Wu(P1.op)}（${P(P1.opm)}）</b>；${BL} 營業利益 ${Wu(P0.op)}（${SP(gr(P1.op,P0.op))}）。`; src='損益表 100/500'; }
   else { ans='目前可回答：賺多少／為什麼少賺／哪個月／哪個廠／廣促費／活動費／費用多花多少／營收增加但利益下降／異常清單。請換個問法，或加上廠名、月份。'; }
-  openDrill({title:'問：'+q,build:()=>({sub:`${entsLabel(cc)}｜${perLabel(cc)}${src?'｜資料來源：'+src:''}${B==='a25'&&!/異常|活動費去|哪.*月/.test(q)?'｜25年為均攤推估':''}`,html:`<div class="card">${ans}</div>`})});
+  openDrill({title:'問：'+q,build:()=>({sub:`${entsLabel(cc)}｜${perLabel(cc)}${src?'｜資料來源：'+src:''}${cc.ss?'｜同店比較':''}`,html:`<div class="card">${ans}</div>`})});
 }
 
 /* ================= 18 人事成本效益分析（獨立模組） ================= */
@@ -1362,15 +1370,16 @@ const HRK={fix:{n:'固定薪',codes:['160'],c:'--s1'},bon:{n:'內促獎金',code
 let HRV='tot', HRTAB='ov', HRSORT={k:'tot',d:-1}, HRTR=new Set(['fix','bon','rev']), HRTH={pct:.15,amt:50000,pp:.02}, HRX2=false, HRKPI='cars';
 const hv=(k,c)=>HRK[k].codes.reduce((s,x)=>s+V(x,c),0);
 const hb=(k,c,b)=>HRK[k].codes.reduce((s,x)=>s+baseV(x,c,b),0);
-function heads(c){ const K=D.kpi['服務廠人數']; let s=0; for(const e of c.ents) for(let m=c.m0;m<=c.m1;m++) s+= e===HQI? Math.max(0,K.svc[m-1]-BR.reduce((t,_,i)=>t+K.br[i][m-1],0)) : K.br[e][m-1]; return s; }
-function headsBase(c,b){ const K=D.kpi['服務廠人數']; if(b==='a25') return K.a25*c.n; if(b==='b26') return K.b26*c.n; if(b==='prev') return heads({...c,m0:c.m0-c.n,m1:c.m0-1}); if(b==='avg') return heads({...c,ents:SVCI})/SVCI.length*c.ents.filter(e=>e!==HQI).length; return null; }
+function heads(c){ const K0=D.kpi['服務廠人數']; const K=c.py?K0.py:K0; if(!K) return 0; let s=0; for(const e of c.ents) for(let m=c.m0;m<=c.m1;m++) s+= e===HQI? Math.max(0,K.svc[m-1]-BR.reduce((t,_,i)=>t+K.br[i][m-1],0)) : K.br[e][m-1]; return s; }
+function headsBase(c,b){ const K=D.kpi['服務廠人數']; if(b==='a25') return K.py?heads({...c,py:true}):K.a25*c.n; if(b==='b26') return K.b26*c.n; if(b==='prev') return heads({...c,m0:c.m0-c.n,m1:c.m0-1}); if(b==='avg') return heads({...c,ents:SVCI})/SVCI.length*c.ents.filter(e=>e!==HQI).length; return null; }
 function hrPack(c){ const o={fix:hv('fix',c),bon:hv('bon',c),oth:V('49020',c),rev:V('100',c),gp:V('120',c),contrib:V('90',c),op:V('500',c),exp:expTot(c),hm:heads(c)}; return hrDerive(o); }
 function hrPackB(c,b){ const o={fix:hb('fix',c,b),bon:hb('bon',c,b),oth:baseV('49020',c,b),rev:baseV('100',c,b),gp:baseV('120',c,b),contrib:baseV('90',c,b),op:baseV('500',c,b),exp:baseExp(c,b),hm:headsBase(c,b)}; return hrDerive(o); }
 function hrDerive(o){ o.tot=o.fix+o.bon; o.hr=o.tot+o.oth; o.rate=ratio(o.tot,o.rev); o.var=ratio(o.bon,o.tot);
   o.pfix=o.hm?o.fix/o.hm:null; o.pbon=o.hm?o.bon/o.hm:null; o.ptot=o.hm?o.tot/o.hm:null; o.prev=o.hm?o.rev/o.hm:null; o.pgp=o.hm?o.gp/o.hm:null; o.pop=o.hm?o.op/o.hm:null;
   o.gm=ratio(o.gp,o.rev); o.cr=ratio(o.contrib,o.rev); return o; }
 /* 時間前後比較（廠別用；Excel 無 2025 廠別資料） */
-function growthPair(c){ if(c.m0-c.n>=1) return {cur:c,base:{...c,m0:c.m0-c.n,m1:c.m0-1},label:`${c.m0}–${c.m1}月 vs ${c.m0-c.n}–${c.m0-1}月`};
+function growthPair(c){ if(hasPY(c)){ return priorRev(c.ents,c.m0,c.m1)>0?{cur:c,base:{...c,py:true},label:'vs 去年同期'}:null; }
+  if(c.m0-c.n>=1) return {cur:c,base:{...c,m0:c.m0-c.n,m1:c.m0-1},label:`${c.m0}–${c.m1}月 vs ${c.m0-c.n}–${c.m0-1}月`};
   if(c.n>=2){ const h=Math.floor(c.n/2); return {cur:{...c,m0:c.m1-h+1},base:{...c,m1:c.m0+h-1},label:`${c.m1-h+1}–${c.m1}月 vs ${c.m0}–${c.m0+h-1}月`}; } return null; }
 function hrBranches(c){ return BR.map((b,i)=>{ if(!c.ents.includes(i)) return null; const cc={...c,ents:[i]}; const p=hrPack(cc); const gp=growthPair(cc); let g={};
   if(gp){ const a=hrPack(gp.cur), z=hrPack(gp.base); ['fix','bon','tot','rev','gp','contrib','op','hm'].forEach(k=>{g[k]=gr(a[k],z[k]); g['d'+k]=a[k]-z[k];}); g.rate=(a.rate||0)-(z.rate||0); g.eff=gr(ratio(a.op,a.tot),ratio(z.op,z.tot)); g.label=gp.label; g.a=a; g.z=z; }
@@ -1547,11 +1556,11 @@ function hrFocus(key){ return (el,c,b,bl)=>{
    <div class="grid g3 mt">${kpiCard({l:`每 NT$1 ${HRK[key].n} 對應營收`,v:n1(p.rev/p[key]),c:`${bl} ${n1(q.rev/q[key])}`})}${kpiCard({l:'對應毛利',v:n1(p.gp/p[key]),c:`${bl} ${n1(q.gp/q[key])}`})}${kpiCard({l:'對應營業利益',v:n1(p.op/p[key]),c:`${bl} ${n1(q.op/q[key])}`})}</div>
    ${key==='bon'?'<div class="banner info mt">以上為「投入產出關聯指標」，只說明獎金與營收／毛利／利益同步如何變化，不代表因果（不是「發 1 元獎金產生 X 元營收」）。</div>':''}
    <div class="grid g2 mt"><div class="card"><h2>${HRK[key].n}｜月</h2><div class="chart sm" id="hrf1"></div></div><div class="card"><h2>${HRK[key].n}增減原因（會計科目）</h2>${hrSubTable(key,c,b,bl)}</div></div>
-   <div class="card mt"><h2>廠別${HRK[key].n}</h2><div class="tbl-wrap"><table><thead><tr><th>廠別</th><th class="n">${HRK[key].n}</th><th class="n">前期</th><th class="n">差額</th><th class="n">成長</th><th class="n">營收</th><th class="n">${key==='fix'?'固定薪率':'獎金占營收'}</th><th class="n">${key==='fix'?'毛利負擔率':'獎金占毛利'}</th><th class="n">毛利</th><th class="n">業務貢獻(邊貢)</th><th class="n">邊貢率</th><th class="n">營業利益</th><th class="n">每$1營收</th><th class="n">每$1毛利</th><th class="n">每$1利益</th>${key==='bon'?'<th>同期成果</th>':''}</tr></thead><tbody>${
+   <div class="card mt"><h2>廠別${HRK[key].n}</h2><div class="tbl-wrap"><table><thead><tr><th>廠別</th><th class="n">${HRK[key].n}</th><th class="n">去年同期</th><th class="n">差額</th><th class="n">YoY</th><th class="n">營收</th><th class="n">${key==='fix'?'固定薪率':'獎金占營收'}</th><th class="n">${key==='fix'?'毛利負擔率':'獎金占毛利'}</th><th class="n">毛利</th><th class="n">業務貢獻(邊貢)</th><th class="n">邊貢率</th><th class="n">營業利益</th><th class="n">每$1營收</th><th class="n">每$1毛利</th><th class="n">每$1利益</th>${key==='bon'?'<th>同期成果</th>':''}</tr></thead><tbody>${
     bs.sort((x,y)=>y[key]-x[key]).map(x=>`<tr class="click" data-sp="${x.i}"><td><b>${x.b}</b>${bpTag(x.i)}${x.closed?' <span class="tag warn">末月營收≈0</span>':''}</td><td class="n">${W(x[key])}</td><td class="n">${x.g.z?W(x.g.z[key]):'—'}</td><td class="n">${x.g.z?SW(x.g['d'+key]):'—'}</td><td class="n">${SP(x.g[key])}</td><td class="n">${W(x.rev)}</td><td class="n">${P(x[key]/x.rev)}</td><td class="n">${P(x[key]/x.gp)}</td><td class="n">${W(x.gp)}</td><td class="n">${W(x.contrib)}</td><td class="n">${P(x.cr)}</td><td class="n">${W(x.op)}</td><td class="n">${n1(x.rev/x[key])}</td><td class="n">${n1(x.gp/x[key])}</td><td class="n">${n1(x.op/x[key])}</td>${key==='bon'?`<td>${x.g['d'+key]>0?hrTagSync(x.g):'<span class="tag neu">獎金未增加</span>'}</td>`:''}</tr>`).join('')}</tbody></table></div>
-   <div class="muted">萬元｜「前期／成長」＝${bs[0]&&bs[0].g.label?bs[0].g.label:'—'}（Excel 無 2025 廠別資料，無法做廠別 YoY）｜點廠別看科目明細</div></div>`);
+   <div class="muted">萬元｜「前期／成長」＝${bs[0]&&bs[0].g.label?bs[0].g.label:'—'}（${hasPY(c)?'2025 同期實際':'無去年資料'}）｜點廠別看科目明細</div></div>`);
   mkChart('hrf1',{legend:{top:0,right:0,textStyle:{color:css('--ink-2'),fontSize:11}},xAxis:{type:'category',data:ms.map(m=>m+'月')},yAxis:wanAxis,series:[{name:HRK[key].n,type:'bar',barWidth:'50%',color:css(HRK[key].c),itemStyle:{borderRadius:[4,4,0,0]},data:mv},
-    ...(c.all?[{name:'25年月均',type:'line',symbol:'none',lineStyle:{type:'dashed',width:1.5},color:css('--ink-3'),data:ms.map(()=>byCode[code].a25/12)}]:[])]});
+    ...(hasPY(c)?[{name:'2025 同月',type:'line',symbolSize:5,lineStyle:{type:'dashed',width:1.5},color:css('--ink-3'),data:ms.map(m=>HRK[key].codes.reduce((t,x)=>t+sumA(byCode[x],{...c,m0:m,m1:m,py:true}),0))}]:[])]});
   el.querySelectorAll('[data-sp]').forEach(tr=>tr.onclick=()=>openDrill(nodeAcct(byCode[code].id,[+tr.dataset.sp],c.m0,c.m1)));
   el.querySelectorAll('[data-acc]').forEach(tr=>tr.onclick=()=>openDrill(nodeAcct(+tr.dataset.acc,c.ents,c.m0,c.m1)));
 };}
@@ -1575,13 +1584,13 @@ HRP.trend=(el,c,b,bl)=>{
   const opts=[['fix','固定薪'],['bon','內促獎金'],['tot','總人事投入'],['rev','營收'],['gp','毛利'],['contrib','零服業務貢獻(邊貢)'],['op','營業利益']];
   const ms=months({m0:1,m1:NM}); const cur=ms.map(m=>hrPack({...c,m0:m,m1:m}));
   const code={fix:['160'],bon:['150'],tot:['160','150'],rev:['100'],gp:['120'],contrib:['90'],op:['500']};
-  const ref=k=>c.all?code[k].reduce((s,x)=>s+byCode[x].a25,0)/12:null;
+  const ref=(k,m)=>hasPY(c)?code[k].reduce((t,x)=>t+sumA(byCode[x],{...c,m0:m,m1:m,py:true}),0):null;
   el.insertAdjacentHTML('beforeend',`<div class="card"><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">${opts.map(o=>`<button class="btn ${HRTR.has(o[0])?'pri':''}" data-t="${o[0]}">${HRTR.has(o[0])?'✓ ':''}${o[1]}</button>`).join('')}</div><div class="chart tall" id="ht1"></div>
-   <div class="muted">${c.all?'每月「去年同期」＝25 年全年 ÷ 12（Excel 無 2025 月別資料），虛線表示。':'非全公司：下表以「上月」比較。'}</div></div>
-   <div class="card mt"><div class="tbl-wrap"><table><thead><tr><th>月</th>${opts.filter(o=>HRTR.has(o[0])).map(o=>`<th class="n">${o[1]}</th><th class="n">${c.all?'25年月均':'上月'}</th><th class="n">差額</th><th class="n">%</th>`).join('')}</tr></thead><tbody>${ms.map((m,i)=>`<tr><td>${m}月</td>${opts.filter(o=>HRTR.has(o[0])).map(o=>{const v=cur[i][o[0]]; const bv=c.all?ref(o[0]):(i?cur[i-1][o[0]]:null); const bad=['fix','bon','tot'].includes(o[0]); return `<td class="n"><b>${W(v)}</b></td><td class="n">${W(bv)}</td><td class="n ${bv==null?'':((v-bv)>0)===!bad?'good-t':'bad-t'}">${bv==null?'—':SW(v-bv)}</td><td class="n">${SP(gr(v,bv))}</td>`;}).join('')}</tr>`).join('')}</tbody></table></div><div class="muted">萬元</div></div>`);
+   <div class="muted">${hasPY(c)?'虛線／比較欄＝2025 同月實際數。':'無去年資料：下表以「上月」比較。'}</div></div>
+   <div class="card mt"><div class="tbl-wrap"><table><thead><tr><th>月</th>${opts.filter(o=>HRTR.has(o[0])).map(o=>`<th class="n">${o[1]}</th><th class="n">${hasPY(c)?'2025 同月':'上月'}</th><th class="n">差額</th><th class="n">%</th>`).join('')}</tr></thead><tbody>${ms.map((m,i)=>`<tr><td>${m}月</td>${opts.filter(o=>HRTR.has(o[0])).map(o=>{const v=cur[i][o[0]]; const bv=hasPY(c)?ref(o[0],m):(i?cur[i-1][o[0]]:null); const bad=['fix','bon','tot'].includes(o[0]); return `<td class="n"><b>${W(v)}</b></td><td class="n">${W(bv)}</td><td class="n ${bv==null?'':((v-bv)>0)===!bad?'good-t':'bad-t'}">${bv==null?'—':SW(v-bv)}</td><td class="n">${SP(gr(v,bv))}</td>`;}).join('')}</tr>`).join('')}</tbody></table></div><div class="muted">萬元</div></div>`);
   el.querySelectorAll('[data-t]').forEach(x=>x.onclick=()=>{const k=x.dataset.t; HRTR.has(k)?HRTR.delete(k):HRTR.add(k); render();});
   const col={fix:'--s1',bon:'--s2',tot:'--s5',rev:'--s3',gp:'--s4',contrib:'--s7',op:'--s6'};
-  const ser=[]; opts.filter(o=>HRTR.has(o[0])).forEach(o=>{ ser.push({name:o[1],type:'line',symbolSize:8,lineStyle:{width:2},color:css(col[o[0]]),data:cur.map(x=>x[o[0]])}); if(c.all) ser.push({name:o[1]+'(25年月均)',type:'line',symbol:'none',lineStyle:{type:'dashed',width:1},color:css(col[o[0]]),data:ms.map(()=>ref(o[0]))}); });
+  const ser=[]; opts.filter(o=>HRTR.has(o[0])).forEach(o=>{ ser.push({name:o[1],type:'line',symbolSize:8,lineStyle:{width:2},color:css(col[o[0]]),data:cur.map(x=>x[o[0]])}); if(hasPY(c)) ser.push({name:o[1]+'(2025)',type:'line',symbol:'none',lineStyle:{type:'dashed',width:1},color:css(col[o[0]]),data:ms.map(m=>ref(o[0],m))}); });
   mkChart('ht1',{legend:{top:0,textStyle:{color:css('--ink-2'),fontSize:11}},grid:{left:60,right:14,top:50,bottom:30},xAxis:{type:'category',data:ms.map(m=>m+'月')},yAxis:wanAxis,series:ser});
 };
 HRP.rank=(el,c,b,bl)=>{
@@ -1591,7 +1600,7 @@ HRP.rank=(el,c,b,bl)=>{
   const menu=[['fix','依固定薪排序'],['bon','依內促獎金排序'],['tot','依總人事成本排序'],['rev','依營收排序'],['gp','依毛利排序'],['contrib','依業務貢獻(邊貢)排序'],['cr','依業務貢獻率(邊貢率)排序'],['op','依營業利益排序'],['rate','依人事成本率排序']];
   el.insertAdjacentHTML('beforeend',`<div class="card"><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">${menu.map(m=>`<button class="btn ${HRSORT.k===m[0]?'pri':''}" data-m="${m[0]}">【${m[1]}】</button>`).join('')}</div>
    <div class="tbl-wrap"><table><thead><tr>${cols.map(k=>`<th class="sort ${k[0]==='b'?'':'n'}" data-k="${k[0]}">${k[1]}${HRSORT.k===k[0]?(HRSORT.d>0?' ↑':' ↓'):''}</th>`).join('')}</tr></thead><tbody>${bs.map(x=>`<tr class="click" data-i="${x.i}"><td><b>${x.b}</b>${bpTag(x.i)}${x.closed?' <span class="tag warn">末月營收≈0</span>':''}</td>${cols.slice(1).map(k=>{const v=val(x,k[0]); return k[0]==='rate'||k[0]==='cr'?`<td class="n">${P(v)}</td>`:k[0][0]==='g'&&k[0]!=='gp'?`<td class="n">${dTag(1+(v??NaN),1,['gfix','gbon','gtot'].includes(k[0])?-1:1)}</td>`:`<td class="n">${W(v)}</td>`;}).join('')}</tr>`).join('')}</tbody></table></div>
-   <div class="muted">萬元｜成長＝${bs[0]&&bs[0].g.label?bs[0].g.label:'—'}（Excel 無 2025 廠別資料，「YoY」欄以本年前後期代替）｜點欄位標題或上方按鈕排序｜點廠別看 AI 診斷</div></div>`);
+   <div class="muted">萬元｜成長＝${bs[0]&&bs[0].g.label?bs[0].g.label:'—'}（${hasPY(c)?'2025 同期實際；「—」＝去年同期未營運':'無去年資料，以本年前後期代替'}）｜點欄位標題或上方按鈕排序｜點廠別看 AI 診斷</div></div>`);
   el.querySelectorAll('th.sort').forEach(th=>th.onclick=()=>{const k=th.dataset.k; HRSORT=HRSORT.k===k?{k,d:-HRSORT.d}:{k,d:-1}; render();});
   el.querySelectorAll('[data-m]').forEach(x=>x.onclick=()=>{const k=x.dataset.m; HRSORT=HRSORT.k===k?{k,d:-HRSORT.d}:{k,d:-1}; render();});
   el.querySelectorAll('tr[data-i]').forEach(tr=>tr.onclick=()=>{ openDrill({title:`${bn(BR[+tr.dataset.i])}｜人事成本 AI 診斷`,build:()=>({sub:perLabel(ctx()),html:`<div class="ai">${hrDiag(ctx({ents:[+tr.dataset.i]}))}</div>`})}); });

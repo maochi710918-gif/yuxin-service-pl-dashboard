@@ -17,7 +17,10 @@ SKIPPED_COLS = sorted({(b, MONTH_SHEETS[k]) for k, h in enumerate(_hdrs) for b i
 HQ = '服務部本部'  # 服務部總表 − 各單位加總 (未分攤之收入/費用)
 ENT = BR + [HQ]
 TYPE = ['鈑噴中心' if '鈑噴' in b else '服務廠' for b in BR]
-ws = wb['服務部']
+ws = wb['2026服務部'] if '2026服務部' in wb.sheetnames else wb['服務部']
+ws5 = wb['2025服務部'] if '2025服務部' in wb.sheetnames else None
+PRIOR_SHEETS = [f'25{m:02d}' for m in range(1, 13) if f'25{m:02d}' in wb.sheetnames] if ws5 else []
+NP = len(PRIOR_SHEETS)
 num = lambda x: float(x) if isinstance(x, (int, float)) else 0.0
 code_s = lambda c: str(c).strip() if c is not None else ''
 
@@ -83,7 +86,32 @@ for mi, sh in enumerate(MONTH_SHEETS):
             a['v'][bi][mi] = val; s += val
         a['v'][len(BR)][mi] = a['svc'][mi] - s  # 本部 = 總表 − 各廠
 
-# KPI 列 (台數/人數) 1451~1471
+# ---------- 2b. 2025 月別 × 單位（同期比較用）----------
+def read_month_matrix(sheets, svc_ws, store):
+    for a in accts:
+        a[store] = [[0.0] * len(sheets) for _ in ENT]; a[store + '_blank'] = set()
+    for mi, sh in enumerate(sheets):
+        rows = list(wb[sh].iter_rows(values_only=True))
+        hdr = [str(h).strip() if h else '' for h in rows[0]]
+        col = {b: hdr.index(b) for b in BR if b in hdr}
+        code_index = {}
+        for ri, r in enumerate(rows): code_index.setdefault(code_s(r[0]), ri)
+        for a in accts:
+            ri = (a['mrow'] - 1) if isinstance(a['mrow'], int) else None
+            if ri is None or ri >= len(rows) or code_s(rows[ri][0]) != a['code']: ri = code_index.get(a['code'])
+            r = rows[ri] if ri is not None else None
+            tot = 0.0
+            for bi, b in enumerate(BR):
+                raw = r[col[b]] if (r and b in col and col[b] < len(r)) else None
+                if raw is None and b in col: a[store + '_blank'].add((bi, mi))
+                v = num(raw); a[store][bi][mi] = v; tot += v
+            svc = num(svc_ws.cell(a['xrow'], 7 + mi).value)
+            a[store][len(BR)][mi] = svc - tot
+if NP:
+    read_month_matrix(PRIOR_SHEETS, ws5, 'py')
+else:
+    for a in accts: a['py'] = None
+
 kpis = {}
 KPI_ROWS = {'保修進廠台數': 1453, '有費台數(不含補償)': 1454, '補償台數': 1455, '服務廠人數': 1462,
             '服務廠直接人數': 1463, '服務廠間接人數': 1464}
@@ -94,7 +122,14 @@ for k, xr in KPI_ROWS.items():
     for mi, sh in enumerate(MONTH_SHEETS):
         wsm = wb[sh]; hdr = [str(h.value).strip() if h.value else '' for h in wsm[1]]
         vals.append([num(wsm.cell(mrow, hdr.index(b) + 1).value) for b in BR])
-    kpis[k] = dict(svc=svc, br=[[vals[m][b] for m in range(NM)] for b in range(len(BR))],
+    py = None
+    if NP:
+        pv = []
+        for sh in PRIOR_SHEETS:
+            wsm = wb[sh]; hdr = [str(h.value).strip() if h.value else '' for h in wsm[1]]
+            pv.append([num(wsm.cell(mrow, hdr.index(b) + 1).value) if b in hdr else 0.0 for b in BR])
+        py = dict(svc=[num(ws5.cell(xr, 7 + m).value) for m in range(NP)], br=[[pv[m][b] for m in range(NP)] for b in range(len(BR))])
+    kpis[k] = dict(svc=svc, br=[[vals[m][b] for m in range(NM)] for b in range(len(BR))], py=py,
                    b26=num(ws.cell(xr, 25).value), a25=num(ws.cell(xr, 27).value))
 
 # 廠別公式勾稽：空白小計列依公式補算並記錄；非空白但不符只警告、不調整
@@ -114,6 +149,20 @@ for bi, b in enumerate(BR):
                 fills.append(dict(type='公式補算', item=f"{b}｜{code} {a['name']}（Excel 儲存格空白，依「{label}」補算）", month=mi + 1, book=0.0, detail=calc, diff=-calc))
             elif abs(book - calc) > 1 and (bi, mi) not in a['blank']:
                 fills.append(dict(type='廠別公式差異', item=f"{b}｜{label}", month=mi + 1, book=book, detail=calc, diff=book - calc))
+if NP:
+    for bi, b in enumerate(BR):
+        for mi in range(NP):
+            g = lambda code: _a(code)['py'][bi][mi]
+            for code, label, f in FORM:
+                a = _a(code); calc = f(g); book = a['py'][bi][mi]
+                if (bi, mi) in a['py_blank'] and abs(calc) > 0.5:
+                    a['py'][bi][mi] = calc
+                    fills.append(dict(type='公式補算(2025)', item=f"{b}｜{code} {a['name']}（2025/{mi+1} 儲存格空白，依「{label}」補算）", month=mi + 1, book=0.0, detail=calc, diff=-calc))
+                elif abs(book - calc) > 1 and (bi, mi) not in a['py_blank']:
+                    fills.append(dict(type='廠別公式差異(2025)', item=f"{b}｜{label}", month=mi + 1, book=book, detail=calc, diff=book - calc))
+    for a in accts:
+        for mi in range(NP):
+            a['py'][len(BR)][mi] = num(ws5.cell(a['xrow'], 7 + mi).value) - sum(a['py'][bi][mi] for bi in range(len(BR)))
 for a in accts:  # 補算後本部殘差同步
     for mi in range(NM):
         a['v'][len(BR)][mi] = a['svc'][mi] - sum(a['v'][bi][mi] for bi in range(len(BR)))
@@ -160,6 +209,12 @@ for mi in range(NM):
         d = by_code[c]['svc'][mi] - calc
         checks.append(dict(type='損益公式', item=label, month=mi + 1, book=by_code[c]['svc'][mi], detail=calc, diff=d))
 
+# 2025 月加總 vs 2026 表「25年實績」
+if NP == 12:
+    for code in ['100', '120', '90', '490', '500']:
+        if code in by_code:
+            a = by_code[code]; sm = sum(num(ws5.cell(a['xrow'], 7 + m).value) for m in range(12))
+            checks.append(dict(type='2025資料', item=f"{code} {a['name']}：2025 月別合計 vs 2026 表「25年實績」", month=0, book=a['a25'], detail=sm, diff=a['a25'] - sm))
 # 總表合計欄 vs 月加總
 for a in accts:
     tot = num(ws.cell(a['xrow'], 19).value); s = sum(a['svc'])
@@ -283,11 +338,12 @@ EXP_FIELDS = ['i', 'code', 'acn', 'e', 'ou', 'm', 'd', 'dr', 'cr', 'a', 's', 'v'
 # ---------- 5. 輸出 ----------
 def r0(x): return round(x)
 out = dict(
-    meta=dict(src=SRC_NAME, months=NM, year=2026, ent=ENT, br=BR, hq=HQ, type=TYPE,
+    meta=dict(src=SRC_NAME, months=NM, pmonths=NP, year=2026, ent=ENT, br=BR, hq=HQ, type=TYPE,
               note='2025 僅有年度合計（服務部層級），無月別、無廠別；同期比較採「25年實績 ÷ 12 × 月數」均攤推估。'),
     acc=[dict(id=a['id'], c=a['code'], n=a['name'], l=a['lvl'], p=a['parent'], x=a['xrow'],
-              v=[[r0(x) for x in row] for row in a['v']], b26=r0(a['b26']), a25=r0(a['a25']), a24=r0(a['a24'])) for a in accts],
-    kpi={k: dict(svc=v['svc'], br=v['br'], b26=v['b26'], a25=v['a25']) for k, v in kpis.items()},
+              v=[[r0(x) for x in row] for row in a['v']], py=([[r0(x) for x in row] for row in a['py']] if a.get('py') else None),
+              b26=r0(a['b26']), a25=r0(a['a25']), a24=r0(a['a24'])) for a in accts],
+    kpi={k: dict(svc=v['svc'], br=v['br'], b26=v['b26'], a25=v['a25'], py=v['py']) for k, v in kpis.items()},
     exp=dict(f=EXP_FIELDS, s=SL, rows=exp, alias=ALIAS), checks=checks)
 json.dump(out, open(os.path.join(HERE, 'data.json'), 'w', encoding='utf-8'), ensure_ascii=False, separators=(',', ':'), default=lambda o: o.item() if hasattr(o, 'item') else str(o))
 
