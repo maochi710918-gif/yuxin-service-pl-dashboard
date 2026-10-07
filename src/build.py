@@ -4,12 +4,13 @@ import openpyxl, json, re, sys
 import pandas as pd, os, shutil, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-SRC = sys.argv[1] if len(sys.argv) > 1 else r'C:\Users\ES\OneDrive\桌面\AI參照\2026損益表 的複本1001.xlsx'
+SRC = sys.argv[1] if len(sys.argv) > 1 else r'C:\Users\ES\OneDrive\桌面\AI參照\谷戰報\2026損益表.xlsx'
 _tmp = os.path.join(tempfile.gettempdir(), '_svc_pl_src.xlsx'); shutil.copyfile(SRC, _tmp)  # 避免 Excel 開啟中被鎖定
 SRC_NAME = os.path.basename(SRC); SRC = _tmp
-MONTH_SHEETS = ['2601', '2602', '2603', '2604', '2605', '2606', '2607', '2608']
-NM = len(MONTH_SHEETS)
 wb = openpyxl.load_workbook(SRC, data_only=True)
+MONTH_SHEETS = [f'26{m:02d}' for m in range(1, 13) if f'26{m:02d}' in wb.sheetnames and wb[f'26{m:02d}'].max_row > 10]  # 只收有資料的月份
+NM = len(MONTH_SHEETS)
+GL26_SHEET = next((n for n in wb.sheetnames if n.startswith('2601') and '費用表' in n), None)
 # 單位清單：直接讀 2601 表頭（新增單位會自動帶入）
 _hdrs = [[str(h.value).strip() for h in wb[sh][1][2:] if h.value is not None and str(h.value).strip()] for sh in MONTH_SHEETS]
 BR = [b for b in _hdrs[0] if all(b in h for h in _hdrs)]
@@ -222,7 +223,7 @@ for a in accts:
         checks.append(dict(type='YTD合計', item=f"{a['code']} {a['name']}", month=0, book=tot, detail=s, diff=tot - s))
 
 # ---------- 4. 費用明細（總帳傳票明細，1002 版起）+ 摘要智慧分類 ----------
-e = pd.read_excel(SRC, sheet_name='2601-08費用表')
+e = pd.read_excel(SRC, sheet_name=GL26_SHEET)
 RULES = [
     (r'遞延收益沖', '會員遞延收益沖銷', None),
     (r'費用部門調整', '會計調整', '部門間調整'),
@@ -350,7 +351,7 @@ EXP_FIELDS = ['i', 'code', 'acn', 'e', 'ou', 'm', 'd', 'dr', 'cr', 'a', 's', 'v'
 # ---------- 5. 輸出 ----------
 def r0(x): return round(x)
 out = dict(
-    meta=dict(src=SRC_NAME, months=NM, pmonths=NP, year=2026, ent=ENT, br=BR, hq=HQ, type=TYPE,
+    meta=dict(src=SRC_NAME, gl26=GL26_SHEET, months=NM, pmonths=NP, year=2026, ent=ENT, br=BR, hq=HQ, type=TYPE,
               note='去年同期＝2025 月別×單位×科目實際數；費用明細含 2025、2026 總帳傳票。'),
     acc=[dict(id=a['id'], c=a['code'], n=a['name'], l=a['lvl'], p=a['parent'], x=a['xrow'],
               v=[[r0(x) for x in row] for row in a['v']], py=([[r0(x) for x in row] for row in a['py']] if a.get('py') else None),
@@ -382,7 +383,7 @@ with pd.ExcelWriter(os.path.join(HERE, '資料模型_服務部損益.xlsx')) as 
     pd.DataFrame(pl).to_excel(w, sheet_name='Fact_PL', index=False)
     pd.DataFrame([dict(年度=r[16], 月份=r[5], 傳票號碼=r[14], 傳票日=r[6], 會計科目=SL[r[1]], 科目名稱=SL[r[2]], 成本中心=SL[r[15]],
                        損益表單位=(ENT[r[3]] if r[3] >= 0 else ''), 範圍外單位=SL[r[4]], 借方=r[7], 貸方=r[8], 淨額_損益方向=r[9],
-                       原始摘要=SL[r[10]], 廠商對象=SL[r[11]], AI分類=SL[r[12]], AI子分類=SL[r[13]], 資料來源=f"2601-08費用表!列{r[0]}") for r in exp]).to_excel(w, sheet_name='Fact_Expense', index=False)
+                       原始摘要=SL[r[10]], 廠商對象=SL[r[11]], AI分類=SL[r[12]], AI子分類=SL[r[13]], 資料來源=f"{GL26_SHEET if r[16] == 2026 else '2025費用表'}!列{r[0]}") for r in exp]).to_excel(w, sheet_name='Fact_Expense', index=False)
     pd.DataFrame([dict(科目代碼=a['code'], 科目名稱=a['name'], 層級=a['lvl'],
                        上層科目=accts[a['parent']]['name'] if a['parent'] is not None else '',
                        YTD實績=sum(a['svc']), 預算26年=a['b26'], 實績25年=a['a25'], 實績24年=a['a24'], 總表列號=a['xrow']) for a in accts]).to_excel(w, sheet_name='Dim_Account', index=False)
