@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>服務部經營戰情</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.0/echarts.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root{
   color-scheme:light;
@@ -198,13 +199,14 @@ tr.lv1 td{font-weight:600}
     <button class="btn pri" onclick="boardMode()">董事會模式</button>
     <button class="btn" onclick="plantMode()">廠長模式</button>
     <div class="ask"><input id="askIn" placeholder="直接問我的損益：例如「哪些廠業務貢獻率(邊貢率)最低？」"><button class="btn" onclick="ask()">問</button></div>
+    <button class="btn" onclick="exportExcel('page')" title="把目前畫面的查詢結果匯出成 Excel">⬇ 匯出 Excel</button>
     <button class="btn toggle-theme" id="themeBtn" title="切換深淺色">◐</button>
     <div id="notice"></div>
   </div>
   <div id="page"></div>
 </main>
 </div>
-<div class="drawer" id="drawer"><div class="mask" onclick="closeDrawer()"></div><div class="panel" id="dpanel"></div></div>
+<div class="drawer" id="drawer"><div class="mask" onclick="closeDrawer()"></div><div class="panel" id="dpanel"></div><button class="btn pri" id="dexp" onclick="exportExcel('drawer')" style="position:fixed;top:14px;right:64px;z-index:75" title="匯出這個明細視窗的內容">⬇ 匯出 Excel</button></div>
 
 <script>
 const D = /*__DATA__*/null;
@@ -574,7 +576,7 @@ function nodeRaw(a,ents,m0,m1){ return {title:'原始傳票',build(){
      <h3 class="mt">差異來源｜依廠商／對象</h3>${diffTable(glDiff(exC,ex25c,x=>x.v).slice(0,10),'廠商／對象')}
      <h3 class="mt">差異來源｜依摘要（去掉月份字樣）</h3>${diffTable(glDiff(exC,ex25c,x=>normS(x.s)).slice(0,10),'摘要')}</div>`:'';
   const seg=`<div class="seg mt" id="rawy"><button data-y="2026" class="${RAWY===2026?'on':''}">今年傳票（${ex.length}）</button>${pyOK?`<button data-y="2025" class="${RAWY===2025?'on':''}">去年同期傳票（${ex25.length}）</button>`:''}</div>`;
-  const list=RAWY===2025&&pyOK?ex25:ex;
+  const list=RAWY===2025&&pyOK?ex25:ex; RAWEXP={cur:ex,prev:pyOK?ex25:[]};
   if(!ex.length&&!ex25.length){ const e=ents[0]; const src=ENT[e]===HQ?`服務部 工作表第 ${a.x} 列 − 各單位加總`:`26${String(m0).padStart(2,'0')} 工作表第 ${a.x-2} 列 ×「${ENT[e]}」欄`;
     return {sub:'',html:note+`<div class="card"><p><b>${esc(a.c)} ${esc(a.n)}</b>｜${ents.map(entName).join('、')}｜${m0===m1?m0+'月':m0+'–'+m1+'月'}</p><p class="num" style="font-size:22px;font-weight:650">${Y(pv)} 元</p><p class="muted">資料來源：${src}</p><p class="muted">傳票明細中沒有此科目 × 單位 × 月份的分錄（可能為分攤或公式計算數）。</p></div>`}; }
   return {sub:`來源：${GL26}${pyOK?'、2025費用表':''}（總帳傳票明細）｜依金額大小排序`,html:note+cmp+seg+`<div class="mt">${rawTable(list.slice(0,300))}</div>`+(list.length>300?'<div class="muted">僅顯示前 300 筆，完整清單請至「原始明細」</div>':''),
@@ -1324,7 +1326,7 @@ R.ai=el=>{
 };
 
 /* 16 原始明細 */
-let RAWQ={q:'',acc:'',c:'',p:0,scope:'in',kind:'exp',y:2026};
+let RAWQ={q:'',acc:'',c:'',p:0,scope:'in',kind:'exp',y:2026}; let RAWPAGEF=null;
 R.raw=el=>{
   const c=ctxAll(); head(el,'原始明細｜總帳傳票',`2025費用表 ${Y(GL.filter(x=>x.y===2025).length)} 筆＋${GL26} ${Y(GL.filter(x=>x.y===2026).length)} 筆（屬服務部損益表單位：${Y(D.exp25.length)}＋${Y(D.exp.length)}）｜${entsLabel(c)}｜${perLabel(c)}｜AI 分類可修改（存在本機瀏覽器）`);
   const base=()=>GL.filter(x=>(RAWQ.y===0||x.y===RAWQ.y)&&(RAWQ.scope==='all'||x.e>=0)&&x.m>=c.m0&&x.m<=c.m1&&(x.e<0||c.ents.includes(x.e))&&(RAWQ.kind==='all'||isExpRow(x)));
@@ -1347,6 +1349,7 @@ R.raw=el=>{
     const b1=document.getElementById('pp'), b2=document.getElementById('pn'); b1.onclick=()=>{RAWQ.p=pg-1;draw();}; b2.onclick=()=>{RAWQ.p=pg+1;draw();}; };
   rq.oninput=()=>{RAWQ.q=rq.value;RAWQ.p=0;draw();}; ra.onchange=()=>{RAWQ.acc=ra.value;RAWQ.p=0;draw();}; rc.onchange=()=>{RAWQ.c=rc.value;RAWQ.p=0;draw();};
   rk.onchange=()=>{RAWQ.kind=rk.value;RAWQ.acc='';RAWQ.p=0;render();}; ry.onchange=()=>{RAWQ.y=+ry.value;RAWQ.acc='';RAWQ.p=0;render();}; rs.onchange=()=>{RAWQ.scope=rs.value;RAWQ.p=0;render();};
+  RAWPAGEF=f;
   rcsv.onclick=()=>{ const ex=f(); const h=['列','年度','月份','日','傳票號碼','成本中心','單位','會計科目','科目名稱','摘要','廠商','AI分類','AI子分類','借方','貸方','淨額(損益方向)']; const q=v=>`"${String(v).replace(/"/g,'""')}"`;
     const csv='﻿'+[h.join(','),...ex.map(x=>[x.i,x.y,x.m,x.d,x.vno,x.cc,x.b,x.code,x.t,x.s,x.v,x.c1,x.c2,x.dr,x.cr,x.a].map(q).join(','))].join('\n');
     const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='傳票明細_AI分類.csv'; a.click(); };
@@ -1743,6 +1746,56 @@ HRP.ai=(el,c,b,bl)=>{
   const show=i=>{document.getElementById('hrao').innerHTML=`<h2>【${bn(BR[i])}】</h2>`+hrDiag(ctx({ents:[i]})); el.querySelectorAll('#hrab button').forEach(x=>x.classList.toggle('on',+x.dataset.i===i));};
   el.querySelectorAll('#hrab button').forEach(x=>x.onclick=()=>show(+x.dataset.i)); show(c.ents.length===1&&c.ents[0]!==HQI?c.ents[0]:0);
 };
+
+/* ================= 匯出 Excel（目前畫面） ================= */
+let RAWEXP=null; // 原始傳票抽屜的完整清單（畫面只顯示前 300 筆）
+const XNUM=t=>{ if(t==null) return t; let s=String(t).replace(/\u00a0/g,' ').trim(); if(!s||s==='—') return s;
+  const pct=/%$/.test(s); const ppx=/\s*pp$/.test(s);
+  let x=s.replace(/^[▲▼]\s*/,'').replace(/[萬元台筆人]$/,'').replace(/\s*pp$/,'').replace(/%$/,'').replace(/−/g,'-').replace(/,/g,'').replace(/^\+/,'').trim();
+  if(!/^-?\d+(\.\d+)?$/.test(x)) return s;
+  const v=parseFloat(x); if(pct) return {v:v/100,z:'0.0%'}; if(ppx) return {v,z:'0.0" pp"'}; return {v,z:/\./.test(x)?'#,##0.0':'#,##0'}; };
+const cellText=td=>{ const c=td.cloneNode(true); c.querySelectorAll('select').forEach(sl=>{ const t=document.createTextNode(sl.options[sl.selectedIndex]?sl.options[sl.selectedIndex].text:''); sl.replaceWith(t); }); return c.innerText.replace(/\s*\n\s*/g,' ').trim(); };
+function tableToAOA(tb){ const rows=[]; tb.querySelectorAll('tr').forEach(tr=>{ const r=[]; tr.querySelectorAll('th,td').forEach(td=>{ const t=cellText(td); r.push(td.tagName==='TH'?t:XNUM(t)); const cs=+td.getAttribute('colspan')||1; for(let k=1;k<cs;k++) r.push(''); }); if(r.some(x=>x!==''&&x!=null)) rows.push(r); }); return rows; }
+function chartToAOA(ch){ const o=ch.getOption(); const ser=(o.series||[]).filter(x=>x&&x.data&&x.data.length);
+  if(!ser.length) return null;
+  if(ser[0].type==='heatmap'){ const xs=o.xAxis[0].data, ys=o.yAxis[0].data; const M=ys.map(()=>xs.map(()=>null)); ser[0].data.forEach(d=>{ const v=Array.isArray(d)?d:d.value; M[v[1]][v[0]]=v[2]; }); return [['',...xs],...ys.map((y,i)=>[y,...M[i]])]; }
+  const xc=o.xAxis&&o.xAxis[0]&&o.xAxis[0].data, yc=o.yAxis&&o.yAxis[0]&&o.yAxis[0].data; const cats=xc||yc; if(!cats) return null;
+  const vis=ser.filter(x=>x.name!==undefined||ser.length===1).filter(x=>!(x.itemStyle&&x.itemStyle.color==='transparent'));
+  const val=d=>d==null?null:(typeof d==='object'?(Array.isArray(d)?d[d.length-1]:d.value):d);
+  return [['',...vis.map((x,i)=>x.name||('數列'+(i+1)))],...cats.map((c,i)=>[c,...vis.map(x=>val(x.data[i]))])]; }
+function sheetName(base,used){ let n=String(base||'表').replace(/[\[\]\*\?\/\\:：｜|]/g,' ').replace(/\s+/g,' ').trim().slice(0,28)||'表'; let k=n,i=2; while(used.has(k)) k=n.slice(0,26)+'_'+(i++); used.add(k); return k; }
+function titleOf(el){ const card=el.closest('.card'); const root=el.closest('#dpanel')||document.getElementById('page');
+  let p=el; while(p&&p!==card&&p!==root){ let q=p.previousElementSibling; while(q){ if(/^H[1-4]$/.test(q.tagName)) return q.innerText.trim(); const hh=q.querySelector&&q.querySelector('h2,h3,h4'); if(hh) return hh.innerText.trim(); q=q.previousElementSibling; } p=p.parentElement; }
+  const h=card&&card.querySelector('h2,h3'); if(h) return h.innerText.trim(); const h1=root&&root.querySelector('h1'); return h1?h1.innerText.trim():''; }
+function addSheet(wb,used,name,aoa,widths){ const ws=XLSX.utils.aoa_to_sheet(aoa.map(r=>r.map(c=>c&&typeof c==='object'&&'v' in c?c.v:c)));
+  aoa.forEach((r,ri)=>r.forEach((c,ci)=>{ if(c&&typeof c==='object'&&'z' in c){ const a=XLSX.utils.encode_cell({r:ri,c:ci}); if(ws[a]){ ws[a].t='n'; ws[a].z=c.z; } } }));
+  const cols=Math.max(...aoa.map(r=>r.length)); ws['!cols']=Array.from({length:cols},(_,ci)=>({wch:widths&&widths[ci]||Math.min(60,Math.max(8,...aoa.map(r=>String(r[ci]&&typeof r[ci]==='object'?r[ci].v:(r[ci]??'')).length*1.6)))}));
+  XLSX.utils.book_append_sheet(wb,ws,sheetName(name,used)); }
+function exportExcel(scope){
+  if(!window.XLSX){ alert('Excel 匯出元件載入失敗（需要網路）'); return; }
+  const root=scope==='drawer'?dpanel:document.getElementById('page'); const wb=XLSX.utils.book_new(); const used=new Set();
+  const c=ctx(); const {b}=effBase(c); const pg=(PAGES.find(p=>p[0]===S.page)||['',''])[1];
+  const title=(root.querySelector('h1')||{}).innerText||pg;
+  const cond=[['項目','內容'],['報表',scope==='drawer'?`${pg}｜${title}`:pg],['年度',S.yr],['期間',perLabel(c)],['單位',entsLabel(c)],['比較基準',BASE_LABEL[b]+(c.ss?'（成長率與差額＝同店）':'')],
+    ['同店比較',S.ss&&S.yr===2026?`開啟${c.ss?'：比較時排除 '+c.ssOut.map(e=>ENT[e]).join('、'):''}`:'未開啟／不適用'],['併入單位',mergedTxt()],['資料來源',D.meta.src],['匯出時間',new Date().toLocaleString('zh-TW')],
+    ['說明','金額單位依畫面（多數為萬元）；百分比已轉成數值格式；本檔為畫面當下的查詢結果']];
+  addSheet(wb,used,'查詢條件',cond,[14,90]);
+  const kpis=[...root.querySelectorAll('.kpi')]; if(kpis.length) addSheet(wb,used,'KPI',[['指標','數值（金額＝萬元）','比較（成長率）','說明'],...kpis.map(k=>[ (k.querySelector('.l span')||{}).innerText||'', XNUM((k.querySelector('.v')||{}).innerText||''), (k.querySelector('.l .tag')||{}).innerText?XNUM(k.querySelector('.l .tag').innerText):'', ((k.querySelector('.c')||{}).innerText||'').replace(/\n/g,'；')])]);
+  const qa=[...root.querySelectorAll('.qa')]; if(qa.length) addSheet(wb,used,'問答',[['#','問題','回答'],...qa.map((q,i)=>[i+1,(q.querySelector('.q')||{}).innerText||'',((q.querySelector('.q')||{}).nextElementSibling||{}).innerText||''])]);
+  const ais=[...root.querySelectorAll('.ai')]; ais.forEach(a=>{ const lines=a.innerText.split('\n').map(x=>x.trim()).filter(Boolean); if(lines.length>3) addSheet(wb,used,'診斷_'+(titleOf(a)||'AI'),[['內容'],...lines.map(x=>[x])]); });
+  root.querySelectorAll('table').forEach((tb,i)=>{ const aoa=tableToAOA(tb); if(aoa.length>1) addSheet(wb,used,titleOf(tb)||('表'+(i+1)),aoa); });
+  const groups=new Map(); root.querySelectorAll('.bar-row').forEach(r=>{ const k=r.parentElement; if(!groups.has(k)) groups.set(k,[]); groups.get(k).push(r); });
+  groups.forEach((rows,k)=>{ const aoa=[['項目','金額','比較／占比']]; rows.forEach(r=>{ const cs=[...r.children]; aoa.push([cs[0]?cs[0].innerText.replace('›','').trim():'', XNUM(cs.length>3?cs[2].innerText:(cs[1]||{}).innerText), XNUM(cs.length>3?cs[3].innerText:(cs[2]||{}).innerText||'')]); }); addSheet(wb,used,titleOf(rows[0])||'清單',aoa); });
+  charts.forEach(ch=>{ const dom=ch.getDom(); if(!root.contains(dom)) return; try{ const aoa=chartToAOA(ch); if(aoa&&aoa.length>1) addSheet(wb,used,'圖_'+(titleOf(dom)||dom.id),aoa); }catch(e){} });
+  if(scope!=='drawer'&&S.page==='raw'&&RAWPAGEF){ const H=['列','年度','月','日','傳票號碼','成本中心','單位','會計科目','科目名稱','摘要','廠商','AI分類','AI子分類','借方','貸方','淨額(損益方向)'];
+    addSheet(wb,used,'傳票明細（完整篩選結果）',[H,...RAWPAGEF().map(x=>[x.i,x.y,x.m,x.d,x.vno,x.cc,x.b,x.code,x.t,x.s,x.v,x.c1,x.c2,x.dr,x.cr,x.a])]); }
+  if(scope==='drawer'&&RAWEXP&&dpanel.contains(document.getElementById('rawy'))){ const H=['年度','月','日','傳票號碼','單位','會計科目','科目名稱','摘要','廠商','AI分類','AI子分類','借方','貸方','淨額(損益方向)'];
+    const toR=x=>[x.y,x.m,x.d,x.vno,x.b,x.code,x.t,x.s,x.v,x.c1,x.c2,x.dr,x.cr,x.a];
+    addSheet(wb,used,'今年傳票（完整）',[H,...RAWEXP.cur.map(toR)]); if(RAWEXP.prev&&RAWEXP.prev.length) addSheet(wb,used,'去年同期傳票（完整）',[H,...RAWEXP.prev.map(toR)]); }
+  if(used.size<=1){ alert('這個畫面沒有可匯出的表格'); return; }
+  const fn=`服務部戰情_${(scope==='drawer'?title:pg).replace(/[\\\/:*?"<>|｜]/g,'_').slice(0,30)}_${S.yr}_${c.m0}-${c.m1}月.xlsx`;
+  XLSX.writeFile(wb,fn);
+}
 
 /* init */
 buildFilters(); render();
