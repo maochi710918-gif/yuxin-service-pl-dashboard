@@ -18,6 +18,10 @@
 
 `src/data.json` 與 Excel 已列入 `.gitignore`，不會上傳。
 
+## 經銷商對標模組（19）
+
+資料來源：`損益/2026年經銷商與裕信各廠別損益表_*.xlsx`。更新方式：先跑 `python build.py`，再跑 `python build_bench.py "對標檔.xlsx"`（會把對標資料併入 data.json），最後照下方第 3 步加密。
+
 ## 如何更新資料
 
 1. 更新 Excel；執行 `python build.py "Excel完整路徑"`（不給路徑則用 build.py 內預設）。月表新增單位會自動讀入。

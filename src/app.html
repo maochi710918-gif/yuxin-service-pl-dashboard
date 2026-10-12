@@ -459,7 +459,7 @@ function acctDeltas(c,b){ c=cmpC(c);
 const PAGES=[
  ['ceo','CEO 經營總覽'],['pl','損益總覽'],['trend','月度趨勢'],['branch','廠別經營'],['rev','收入分析'],['cost','成本分析'],
  ['exp','費用分析'],['promo','廣促費解剖'],['act','活動費分析'],['money','Money Flow'],['bridge','損益 Bridge'],['yoy','同期比較'],
- ['radar','異常雷達'],['cross','交叉分析'],['ai','AI 經營診斷'],['raw','原始明細'],['recon','資料勾稽'],['hr','人事成本效益']];
+ ['radar','異常雷達'],['cross','交叉分析'],['ai','AI 經營診斷'],['raw','原始明細'],['recon','資料勾稽'],['hr','人事成本效益'],['bench','經銷商對標・降本增效']];
 function buildNav(){ document.getElementById('navlist').innerHTML=PAGES.map((p,i)=>`${p[0]==='hr'?'<hr><div class="muted" style="padding:0 10px 4px">獨立模組</div>':''}<a data-p="${p[0]}" class="${S.page===p[0]?'on':''}"><span class="no">${String(i+1).padStart(2,'0')}</span>${p[1]}</a>`).join('');
   document.querySelectorAll('#navlist a').forEach(a=>a.onclick=()=>{S.page=a.dataset.p; document.getElementById('side').classList.remove('open'); render();}); }
 
@@ -1745,6 +1745,170 @@ HRP.ai=(el,c,b,bl)=>{
   el.insertAdjacentHTML('beforeend',`<div class="card ai">${hrDiag(c)}</div><div class="card mt"><h2>各廠人事成本診斷</h2><div class="seg" id="hrab" style="flex-wrap:wrap">${BR.map((x,i)=>`<button data-i="${i}">${x}</button>`).join('')}</div><div id="hrao" class="ai mt"></div></div>`);
   const show=i=>{document.getElementById('hrao').innerHTML=`<h2>【${bn(BR[i])}】</h2>`+hrDiag(ctx({ents:[i]})); el.querySelectorAll('#hrab button').forEach(x=>x.classList.toggle('on',+x.dataset.i===i));};
   el.querySelectorAll('#hrab button').forEach(x=>x.onclick=()=>show(+x.dataset.i)); show(c.ents.length===1&&c.ents[0]!==HQI?c.ents[0]:0);
+};
+
+/* ================= 19 經銷商對標・降本增效（獨立模組，2026/1–8 經銷商損益表） ================= */
+const BN=D.bench||null;
+const BGR=[
+ {k:'G1',n:'售價／折讓（毛利＋外促）',ks:['gp','ext'],type:'可控',rv:['C2','C6'],act:'檢查折扣與抵用券規則（廣促 61179910）、補償件占比（26 年補償金額較去年 +187%）、零件定價與工資費率；同業有把護照／抵用券列在成本，故毛利與外促合併看。'},
+ {k:'G2',n:'原廠補助',ks:['bonus'],type:'可控',rv:['C4'],act:'盤點可申請的原廠補助（輪胎、專案、客訴車），確認零件獎勵金、抵用券找補是否完整入帳。'},
+ {k:'G3',n:'人事（內促＋固薪）',ks:['int','fixd','fixi'],type:'可控／結構',rv:['C7','C8','C9'],act:'裕信為低底薪＋高獎金，請看「人事合計」而非單項。人均產值偏低的廠檢討人力配置、間接人員比例，獎金與毛利連動。'},
+ {k:'G4',n:'資產使用（租金＋折舊＋代步車）',ks:['rent','dep','car'],type:'結構',rv:['E1','E2','C11'],act:'盤點各廠租約（坪數、單價、到期日），評估議價、據點整併或自有化；代步車同業多列租金，裕信列收益＋折舊，合併看才可比。'},
+ {k:'G5',n:'營運費用（事務＋推廣＋其他＋跌價）',ks:['adm','promo','oth','inv'],type:'可控',rv:['E3','E4','E5','C10'],act:'刷卡手續費、水電、雜支、修繕、保全、保險訂標準費率；超標廠逐項查傳票（可從儀表板「原始傳票」追到廠商）。'}];
+const BLN=[['gp','零服毛利率'],['bonus','零服獎金補助'],['ext','零服外促費用'],['int','零服內促費用'],['fixd','服務廠固定薪(直接)'],['fixi','服務廠固定薪(間接)'],['inv','零件存貨跌價損失'],['car','租金支出-代步車'],['C','零服貢獻率（小計）'],['rent','租金支出-一般'],['dep','折舊與攤提'],['adm','事務費用'],['promo','推廣費用'],['oth','其他費用'],['E','分攤營運費用（小計）'],['nm','零服淨利率']];
+const PEERS=['元隆','裕新','裕民','裕唐','匯聯','國通','裕昌'];
+const NOCMP={G4:['元隆'],G5:['元隆'],rent:['元隆'],dep:['元隆'],adm:['元隆']}; // 元隆租金、折舊、部分費用列總公司
+const REGION={台北:['承德','淡水','大安','民權','濱江','北投','撫遠鈑噴']}; // 假設：2025/9–10 併入單位＝台北區
+let BTAB='ov', BBASE='nat_ex', BPB='nat_ex', BPV='grp', BSEL=null;
+const pRatio=p=>{ const R=p.rev||0; if(!R) return null; const o={rev:R}; ['gp','bonus','C'].forEach(k=>o[k]=(p[k]||0)/R); ['cost','ext','int','fixd','fixi','inv','car','rent','dep','adm','promo','oth','E'].forEach(k=>o[k]=-(p[k]||0)/R); o.nm=(p.net!=null?p.net:(p.C-p.E))/R; return o; };
+const gval=(o,g)=>o?g.ks.reduce((s,k)=>s+(o[k]||0),0):null;
+const sumPlants=names=>{ const o={}; names.forEach(n=>{ const p=BN.plants[n]; if(!p) return; Object.entries(p).forEach(([k,v])=>{ if(typeof v==='number') o[k]=(o[k]||0)+v; }); }); o.net=(o.C||0)-(o.E||0); return o; };
+const SVP=()=>Object.keys(BN.plants).filter(n=>n!=='裕信合計'&&n!=='服務部本部'&&!/鈑噴/.test(n));
+const regionSets=()=>{ const all=Object.keys(BN.plants).filter(n=>n!=='裕信合計'&&n!=='服務部本部'); const tp=all.filter(n=>REGION.台北.includes(n)); return {台北:tp,新北:all.filter(n=>!tp.includes(n)),本部:['服務部本部']}; };
+const dv=(name)=>{ if(name==='裕信(台北)') return pRatio(sumPlants(regionSets().台北)); if(name==='裕信(新北)') return pRatio(sumPlants(regionSets().新北)); return BN.dealers[name]; };
+const median=a=>{ const s=a.filter(x=>x!=null&&isFinite(x)).sort((x,y)=>x-y); if(!s.length) return null; const m=Math.floor(s.length/2); return s.length%2?s[m]:(s[m-1]+s[m])/2; };
+function benchVal(kind,key,isG){ const get=n=>{ const o=dv(n); return isG?gval(o,BGR.find(g=>g.k===key)):(o?o[key]:null); };
+  if(kind==='nat_ex') return get('全國(不含裕信)'); if(kind==='nat') return get('全國');
+  const peers=PEERS.filter(n=>!(NOCMP[key]||[]).includes(n)).map(get).filter(v=>v!=null);
+  if(kind==='median') return median(peers); if(kind==='best') return Math.max(...peers); return get(kind); }
+const BBL={nat_ex:'全國（不含裕信）',nat:'全國',median:'同業中位數',best:'同業最佳（各項）'};
+const ppx=v=>v==null||!isFinite(v)?'—':(v>=0?'+':'')+(v*100).toFixed(1)+' pp';
+const pc=v=>v==null||!isFinite(v)?'—':(v*100).toFixed(1)+'%';
+const Kw=k=>k==null?'—':W(k*1000); // 千元 → 萬元顯示
+const heatBg=(d,mx)=>d==null||!isFinite(d)?'':`background:color-mix(in srgb, ${d>=0?'var(--div-pos)':'var(--div-neg)'} ${Math.round(Math.min(Math.abs(d)/(mx||0.02),1)*55)}%, transparent)`;
+
+R.bench=el=>{
+  if(!BN){ head(el,'經銷商對標','尚未載入對標資料'); return; }
+  const yx=BN.dealers['裕信'], nx=BN.dealers['全國(不含裕信)'], Rv=yx.rev;
+  head(el,'經銷商對標・降本增效',`資料：${esc(BN.src)}｜${BN.period}｜單位：萬元（原表千元）｜本模組期間固定為對標表期間，不受上方篩選影響`);
+  el.insertAdjacentHTML('beforeend',`<span class="seg" id="btab" style="flex-wrap:wrap;margin-bottom:12px">${[['ov','總覽'],['table','經銷商對標表'],['gap','差距拆解'],['plant','裕信各廠對標'],['region','台北 vs 新北'],['opp','降本增效機會'],['eff','效率指標'],['rule','口徑與資料檢核']].map(t=>`<button data-k="${t[0]}" class="${BTAB===t[0]?'on':''}">${t[1]}</button>`).join('')}</span>`);
+  el.querySelectorAll('#btab button').forEach(b=>b.onclick=()=>{BTAB=b.dataset.k;render();});
+  const box=document.createElement('div'); el.appendChild(box); (BPAGE[BTAB]||BPAGE.ov)(box,yx,nx,Rv);
+};
+const BPAGE={};
+/* 總覽 */
+BPAGE.ov=(el,yx,nx,Rv)=>{
+  const book=BN.dealer_book_yx||{}; const gapNm=yx.nm-nx.nm;
+  const all=['裕信',...PEERS].map(n=>({n,v:BN.dealers[n].nm})).sort((a,b)=>b.v-a.v); const rk=all.findIndex(x=>x.n==='裕信')+1;
+  const gs=BGR.map(g=>({g,yv:gval(yx,g),bv:gval(nx,g)})).map(o=>({...o,d:o.yv-o.bv,amt:(o.yv-o.bv)*Rv}));
+  const worst=gs.slice().sort((a,b)=>a.amt-b.amt), best=gs.slice().sort((a,b)=>b.amt-a.amt)[0];
+  el.insertAdjacentHTML('beforeend',`<div class="grid g4">
+   ${kpiCard({l:'裕信 零服淨利率',v:pc(yx.nm),tag:dTag(yx.nm,nx.nm,1,true),c:`淨利 ${Kw(yx.net)} 萬｜<span class="warn-t">原表 ${pc(book.nm)}（合計欄淨利多計 ${Kw(book.net-yx.net)} 萬，已更正）</span>`})}
+   ${kpiCard({l:'全國（不含裕信）',v:pc(nx.nm),c:`全國含裕信 ${pc(BN.dealers['全國'].nm)}`})}
+   ${kpiCard({l:'與全國（不含裕信）差距',v:`${(gapNm*100).toFixed(1)}<small>pp</small>`,c:`以裕信營收換算約 <b>${Kw(gapNm*Rv)} 萬</b>（${BN.period}）`})}
+   ${kpiCard({l:'同業淨利率排名',v:`第 ${rk}<small>／${all.length}</small>`,c:all.map(x=>`${x.n} ${pc(x.v)}`).join('、')})}</div>
+   <div class="grid g2 mt"><div class="card"><h2>五大構面：裕信 vs 全國（不含裕信）</h2>${barList(gs.map(o=>({label:`${o.g.n}（${pc(o.yv)} vs ${pc(o.bv)}）`,v:o.amt*1000,tag:`<span class="tag ${o.d>=0?'good':'bad'}">${ppx(o.d)}</span>`})))}<div class="muted">金額＝差距 pp × 裕信營收；正＝裕信較有利。口徑調整：毛利＋外促、人事三項、資產使用三項各自合併比較。</div></div>
+   <div class="card ai"><h2 style="color:var(--accent)">對標結論</h2>
+    <p><b>裕信 ${BN.period} 零服淨利率 ${pc(yx.nm)}，低於全國（不含裕信）${pc(nx.nm)} 約 ${(Math.abs(gapNm)*100).toFixed(1)} 個百分點（約 ${Kw(Math.abs(gapNm)*Rv)} 萬），同業第 ${rk} 名。</b></p>
+    <p>最大落差：${worst.filter(o=>o.amt<0).slice(0,2).map(o=>`<b>${o.g.n}</b> ${ppx(o.d)}（${Kw(o.amt)} 萬）`).join('；')}。</p>
+    <p>相對優勢：<b>${best.g.n}</b> ${ppx(best.d)}（${Kw(best.amt)} 萬）。</p>
+    <p>單台有費營收 ${BN.dealers['裕信'].perCar?Number(BN.dealers['裕信'].perCar).toFixed(1):'—'} 千元 vs 全國 ${Number(BN.dealers['全國'].perCar).toFixed(1)} 千元。</p>
+    <p class="muted">「降本增效機會」分頁列出各構面、各廠可改善金額與檢討方向；「口徑與資料檢核」列出原表需更正之處。</p></div></div>`);
+};
+/* 經銷商對標表 */
+BPAGE.table=(el,yx,nx)=>{
+  const cols=['全國','全國(不含裕信)','裕信','裕信(台北)','裕信(新北)',...PEERS];
+  const rows=[...BLN.map(([k,n])=>({k,n})),{sep:'口徑調整後構面'},...BGR.map(g=>({k:g.k,n:g.n,g}))];
+  const val=(c,r)=>{ const o=dv(c); if(!o) return null; return r.g?gval(o,r.g):o[r.k]; };
+  const rank=r=>{ const arr=['裕信',...PEERS].filter(n=>!(NOCMP[r.k]||[]).includes(n)).map(n=>({n,v:val(n,r)})).filter(x=>x.v!=null).sort((a,b)=>b.v-a.v); const i=arr.findIndex(x=>x.n==='裕信'); return i<0?'—':`${i+1}/${arr.length}`; };
+  el.insertAdjacentHTML('beforeend',`<div class="card"><h2>零服損益結構（占營收比例；正＝增加淨利、負＝減少淨利）</h2><div class="tbl-wrap"><table class="heat"><thead><tr><th>項目</th>${cols.map(c=>`<th class="n">${c.replace('(','<br>(')}</th>`).join('')}<th class="n">裕信排名</th><th>差異說明</th></tr></thead><tbody>
+   ${rows.map(r=>{ if(r.sep) return `<tr class="lv0"><td colspan="${cols.length+3}">${r.sep}</td></tr>`; const b=val('全國(不含裕信)',r); const note=(BN.notes[r.k+'_named']||BN.notes[r.k]||'');
+     return `<tr class="${['C','E','nm'].includes(r.k)||r.g?'lv1':''}"><td>${r.n}</td>${cols.map(c=>{ const v=val(c,r); const d=v!=null&&b!=null&&c!=='全國'&&c!=='全國(不含裕信)'?v-b:null; return `<td class="n" style="${heatBg(d,0.03)}">${pc(v)}${(NOCMP[r.k]||[]).includes(c)?'*':''}</td>`; }).join('')}<td class="n">${rank(r)}</td><td class="muted" style="min-width:240px;font-size:12px">${esc(note).replace(/\n/g,'<br>')}</td></tr>`; }).join('')}
+   <tr><td>零服營收（萬）</td>${cols.map(c=>{const o=dv(c); return `<td class="n">${o&&o.rev?Kw(o.rev):'—'}</td>`;}).join('')}<td></td><td></td></tr>
+   <tr><td>單台有費營收（千元）</td>${cols.map(c=>{const o=BN.dealers[c]; return `<td class="n">${o&&o.perCar?Number(o.perCar).toFixed(1):'—'}</td>`;}).join('')}<td></td><td></td></tr></tbody></table></div>
+   <div class="muted">底色＝與全國（不含裕信）比較：藍＝較有利、紅＝較不利｜* 元隆租金、折舊等列於總公司，口徑不同，不列入排名與同業最佳｜裕信(台北)/(新北) 由各廠金額加總計算（分區假設見「台北 vs 新北」）｜裕信欄依各廠金額重算（淨利已更正）</div></div>`);
+};
+/* 差距拆解 */
+BPAGE.gap=(el,yx,nx,Rv)=>{
+  const opts=[['nat_ex','全國（不含裕信）'],['nat','全國'],['median','同業中位數'],['best','同業最佳（各項）'],...PEERS.map(p=>[p,p])];
+  el.insertAdjacentHTML('beforeend',`<div class="card" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">比較對象 <select id="bbs" class="pill-in" style="width:auto">${opts.map(o=>`<option value="${o[0]}" ${BBASE===o[0]?'selected':''}>${o[1]}</option>`).join('')}</select> 拆解層級 <span class="seg" id="bpv"><button data-k="grp" class="${BPV==='grp'?'on':''}">五大構面</button><button data-k="line" class="${BPV==='line'?'on':''}">單項</button></span></div>
+   <div class="card mt"><h2>零服淨利率：${BBL[BBASE]||BBASE} → 裕信</h2><div class="chart tall" id="bwf"></div></div><div class="card mt"><div class="tbl-wrap" id="bgt"></div></div>`);
+  document.getElementById('bbs').onchange=e=>{BBASE=e.target.value;render();}; el.querySelectorAll('#bpv button').forEach(b=>b.onclick=()=>{BPV=b.dataset.k;render();});
+  const items=BPV==='grp'?BGR.map(g=>({n:g.n,y:gval(yx,g),b:benchVal(BBASE,g.k,true),type:g.type,act:g.act})):BLN.filter(([k])=>!['C','E','nm'].includes(k)).map(([k,n])=>({n,y:yx[k],b:benchVal(BBASE,k,false)}));
+  items.forEach(o=>{o.d=(o.y||0)-(o.b||0); o.amt=o.d*Rv;});
+  const start=BBASE==='best'?items.reduce((s,o)=>s+(o.b||0),0):(benchVal(BBASE,'nm',false));
+  const resid=yx.nm-start-items.reduce((s,o)=>s+o.d,0); if(Math.abs(resid)>0.0005) items.push({n:'其他／尾差',y:null,b:null,d:resid,amt:resid*Rv});
+  let run=start; const base=[0],up=[start],pos=[null],neg=[null]; items.forEach(o=>{ base.push(Math.min(run,run+o.d)); if(o.d>=0){pos.push(o.d);neg.push(null);}else{neg.push(-o.d);pos.push(null);} up.push(null); run+=o.d; }); base.push(0); up.push(yx.nm); pos.push(null); neg.push(null);
+  const cats=[BBL[BBASE]||BBASE,...items.map(o=>o.n),'裕信'];
+  mkChart('bwf',{grid:{left:60,right:14,top:24,bottom:90},tooltip:{trigger:'axis',axisPointer:{type:'shadow'},formatter:p=>{const i=p[0].dataIndex; if(i===0) return `${cats[0]} ${pc(start)}`; if(i===cats.length-1) return `裕信 ${pc(yx.nm)}`; const o=items[i-1]; return `${o.n}<br>${ppx(o.d)}｜${Kw(o.amt)} 萬`;}},
+    xAxis:{type:'category',data:cats,axisLabel:{rotate:30,interval:0,fontSize:11}},yAxis:{type:'value',axisLabel:{formatter:v=>(v*100).toFixed(0)+'%'}},
+    series:[{type:'bar',stack:'w',itemStyle:{color:'transparent'},data:base},{type:'bar',stack:'w',color:css('--s1'),itemStyle:{borderRadius:[4,4,0,0]},data:up,label:{show:true,position:'top',fontSize:10,formatter:p=>p.value?pc(p.value):''}},
+      {type:'bar',stack:'w',color:css('--s3'),data:pos,label:{show:true,position:'top',fontSize:10,color:css('--ink-2'),formatter:p=>p.value?'+'+(p.value*100).toFixed(1):''}},{type:'bar',stack:'w',color:css('--s8'),data:neg,label:{show:true,position:'bottom',fontSize:10,color:css('--ink-2'),formatter:p=>p.value?'−'+(p.value*100).toFixed(1):''}}]});
+  document.getElementById('bgt').innerHTML=`<table><thead><tr><th>項目</th><th class="n">裕信</th><th class="n">${BBL[BBASE]||BBASE}</th><th class="n">差距</th><th class="n">金額（萬）</th>${BPV==='grp'?'<th>類型</th><th>改善方向</th>':''}</tr></thead><tbody>${items.map(o=>`<tr><td>${o.n}</td><td class="n">${pc(o.y)}</td><td class="n">${pc(o.b)}</td><td class="n ${o.d>=0?'good-t':'bad-t'}">${ppx(o.d)}</td><td class="n ${o.amt>=0?'good-t':'bad-t'}">${Kw(o.amt)}</td>${BPV==='grp'&&o.type?`<td>${o.type}</td><td style="font-size:12.5px">${o.act}</td>`:BPV==='grp'?'<td></td><td></td>':''}</tr>`).join('')}</tbody></table><div class="muted">金額＝差距 × 裕信營收 ${Kw(Rv)} 萬｜「同業最佳」為各項分別取最佳者，起點為其加總（理論值）</div>`;
+};
+/* 裕信各廠對標 */
+BPAGE.plant=(el,yx,nx)=>{
+  const sv=SVP(); const avg=pRatio(sumPlants(sv)); const pr=sv.map(n=>({n,o:pRatio(BN.plants[n])})).filter(x=>x.o);
+  const q75=key=>{ const a=pr.map(x=>key.startsWith('G')?gval(x.o,BGR.find(g=>g.k===key)):x.o[key]).sort((a,b)=>b-a); return a[Math.floor(a.length*0.25)]; };
+  const ref=(key,isG)=>BPB==='nat_ex'?(isG?gval(nx,BGR.find(g=>g.k===key)):nx[key]):BPB==='avg'?(isG?gval(avg,BGR.find(g=>g.k===key)):avg[key]):q75(key);
+  const keys=BPV==='grp'?BGR.map(g=>({k:g.k,n:g.n,isG:true})):BLN.filter(([k])=>!['C','E','nm'].includes(k)).map(([k,n])=>({k,n,isG:false}));
+  const v=(o,x)=>x.isG?gval(o,BGR.find(g=>g.k===x.k)):o[x.k];
+  pr.forEach(x=>{ x.gaps=keys.map(kk=>v(x.o,kk)-ref(kk.k,kk.isG)); x.nmGap=x.o.nm-ref('nm',false); });
+  pr.sort((a,b)=>b.o.nm-a.o.nm);
+  const others=['撫遠鈑噴','新莊鈑噴','服務部本部'].filter(n=>BN.plants[n]);
+  el.insertAdjacentHTML('beforeend',`<div class="card" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">比較基準 <span class="seg" id="bpb">${[['nat_ex','全國（不含裕信）'],['avg','裕信服務廠平均'],['q75','裕信前 25% 廠']].map(o=>`<button data-k="${o[0]}" class="${BPB===o[0]?'on':''}">${o[1]}</button>`).join('')}</span> 層級 <span class="seg" id="bpv"><button data-k="grp" class="${BPV==='grp'?'on':''}">五大構面</button><button data-k="line" class="${BPV==='line'?'on':''}">單項</button></span></div>
+   <div class="card mt"><h2>各廠零服淨利率與差距（vs ${{nat_ex:'全國（不含裕信）',avg:'裕信服務廠平均',q75:'裕信前 25% 廠'}[BPB]}）</h2><div class="tbl-wrap"><table class="heat"><thead><tr><th>廠別</th><th class="n">營收（萬）</th><th class="n">淨利率</th><th class="n">差距</th>${keys.map(kk=>`<th class="n">${kk.n}</th>`).join('')}<th class="n">換算金額（萬）</th></tr></thead><tbody>
+   <tr class="lv1"><td>比較基準</td><td></td><td class="n">${pc(ref('nm',false))}</td><td></td>${keys.map(kk=>`<td class="n muted">${pc(ref(kk.k,kk.isG))}</td>`).join('')}<td></td></tr>
+   ${pr.map(x=>`<tr class="click" data-bp="${x.n}"><td><b>${x.n}</b>${REGION.台北.includes(x.n)?' <span class="tag neu">台北</span>':''}</td><td class="n">${Kw(x.o.rev)}</td><td class="n"><b>${pc(x.o.nm)}</b></td><td class="n">${ppx(x.nmGap)}</td>${x.gaps.map(d=>`<td class="n" style="${heatBg(d,0.03)}">${ppx(d)}</td>`).join('')}<td class="n ${x.nmGap>=0?'good-t':'bad-t'}">${Kw(x.nmGap*x.o.rev)}</td></tr>`).join('')}</tbody></table></div>
+   <div class="muted">格內＝該廠占營收比例 − 基準（pp），藍＝較有利｜點廠別看該廠差距拆解｜鈑噴中心、本部另列（比例無意義）：${others.map(n=>`${n} 淨利 ${Kw(BN.plants[n].net!=null?BN.plants[n].net:(BN.plants[n].C-BN.plants[n].E))} 萬`).join('、')}</div></div>
+   <div class="card mt" id="bpd"><div class="muted">點上表任一廠，看差距拆解與改善方向。</div></div>`);
+  el.querySelectorAll('#bpb button').forEach(b=>b.onclick=()=>{BPB=b.dataset.k;render();}); el.querySelectorAll('#bpv button').forEach(b=>b.onclick=()=>{BPV=b.dataset.k;render();});
+  const show=n=>{ const x=pr.find(y=>y.n===n); if(!x) return; const its=keys.map((kk,i)=>({n:kk.n,d:x.gaps[i],amt:x.gaps[i]*x.o.rev,g:kk.isG?BGR.find(g=>g.k===kk.k):null})).sort((a,b)=>a.amt-b.amt);
+    document.getElementById('bpd').innerHTML=`<h2>${n}：淨利率 ${pc(x.o.nm)}（${ppx(x.nmGap)}，${Kw(x.nmGap*x.o.rev)} 萬）</h2>${barList(its.map(o=>({label:o.n,v:o.amt*1000,tag:`<span class="tag ${o.d>=0?'good':'bad'}">${ppx(o.d)}</span>`})))}
+     <h3 class="mt">優先改善</h3><ul>${its.filter(o=>o.amt<0).slice(0,3).map(o=>`<li><b>${o.n}</b>：落後 ${ppx(o.d)}，約 ${Kw(-o.amt)} 萬。${o.g?o.g.act:''}</li>`).join('')||'<li>各項皆不低於基準</li>'}</ul>
+     <p class="muted">人數 ${BN.plants[n].heads||'—'}（直接 ${BN.plants[n].dheads||'—'}／間接 ${BN.plants[n].iheads||'—'}）｜有費台數 ${Y(BN.plants[n].paid)}｜點儀表板「04 廠別經營」可看該廠月別與傳票。</p>`; };
+  el.querySelectorAll('[data-bp]').forEach(tr=>tr.onclick=()=>{BSEL=tr.dataset.bp; show(BSEL);}); show(BSEL&&pr.find(y=>y.n===BSEL)?BSEL:pr[pr.length-1].n);
+};
+/* 台北 vs 新北 */
+BPAGE.region=(el,yx,nx)=>{
+  const rs=regionSets(); const rows=[['裕信(台北)',pRatio(sumPlants(rs.台北)),sumPlants(rs.台北)],['裕信(新北)',pRatio(sumPlants(rs.新北)),sumPlants(rs.新北)],['服務部本部',pRatio(BN.plants['服務部本部']),BN.plants['服務部本部']],['裕信合計',yx,BN.plants['裕信合計']],['全國（不含裕信）',nx,null]];
+  const keys=[...BLN.filter(([k])=>!['C','E'].includes(k)).map(([k,n])=>({k,n})),...BGR.map(g=>({k:g.k,n:g.n,g}))];
+  el.insertAdjacentHTML('beforeend',`<div class="banner warn">分區假設：<b>台北＝${rs.台北.join('、')}</b>（2025/9–10 併入單位）；<b>新北＝${rs.新北.join('、')}</b>；本部（外販、會員遞延沖回、部分分攤）不分區。原表「裕信(台北)／(新北)」欄為空白，此處由各廠金額加總計算——若分區不同請告訴我。</div>
+   <div class="card"><div class="tbl-wrap"><table class="heat"><thead><tr><th>項目</th>${rows.map(r=>`<th class="n">${r[0]}</th>`).join('')}</tr></thead><tbody>
+   <tr class="lv1"><td>零服營收（萬）</td>${rows.map(r=>`<td class="n">${r[1]?Kw(r[1].rev):'—'}</td>`).join('')}</tr>
+   ${keys.map(x=>{ const b=x.g?gval(nx,x.g):nx[x.k]; return `<tr class="${x.k==='nm'||x.g?'lv1':''}"><td>${x.n}</td>${rows.map((r,i)=>{ const v=r[1]?(x.g?gval(r[1],x.g):r[1][x.k]):null; const d=i<4&&v!=null&&b!=null?v-b:null; return `<td class="n" style="${i<2||i===3?heatBg(d,0.03):''}">${pc(v)}</td>`; }).join('')}</tr>`; }).join('')}
+   <tr><td>零服淨利（萬）</td>${rows.map(r=>`<td class="n">${r[2]?Kw(r[2].net!=null?r[2].net:(r[2].C-r[2].E)):'—'}</td>`).join('')}</tr>
+   <tr><td>有費台數</td>${rows.map(r=>`<td class="n">${r[2]&&r[2].paid?Y(r[2].paid):'—'}</td>`).join('')}</tr>
+   <tr><td>服務廠人數（平均）</td>${rows.map(r=>`<td class="n">${r[2]&&r[2].heads?r[2].heads.toFixed(1):'—'}</td>`).join('')}</tr></tbody></table></div><div class="muted">底色＝與全國（不含裕信）比較｜台北含撫遠鈑噴（虧損）；本部比例無意義</div></div>`);
+};
+/* 降本增效機會 */
+BPAGE.opp=(el,yx,nx,Rv)=>{
+  const comp=BGR.map(g=>{ const y=gval(yx,g), n=gval(nx,g), b=benchVal('best',g.k,true), m=benchVal('median',g.k,true); return {g,y,n,b,m,toNat:Math.max(0,n-y)*Rv,toMed:Math.max(0,m-y)*Rv,toBest:Math.max(0,b-y)*Rv}; });
+  const sv=SVP(); const pr=sv.map(n=>({n,o:pRatio(BN.plants[n])})).filter(x=>x.o);
+  const q75=g=>{ const a=pr.map(x=>gval(x.o,g)).sort((a,b)=>b-a); return a[Math.floor(a.length*0.25)]; };
+  const ops=[]; pr.forEach(x=>BGR.forEach(g=>{ const t=q75(g), v=gval(x.o,g); if(v<t) ops.push({n:x.n,g,v,t,amt:(t-v)*x.o.rev}); })); ops.sort((a,b)=>b.amt-a.amt);
+  const byPlant={}; ops.forEach(o=>byPlant[o.n]=(byPlant[o.n]||0)+o.amt); const tp=Object.entries(byPlant).sort((a,b)=>b[1]-a[1]);
+  // 增效：單台營收、人均營收
+  const eff=pr.map(x=>{ const p=BN.plants[x.n]; return {n:x.n,perCar:p.paid?p.rev/p.paid:null,perHead:p.heads?p.rev/p.heads/8:null,cr:x.o.C,paid:p.paid,rev:p.rev}; });
+  const medCar=median(eff.map(e=>e.perCar)), q75Car=eff.map(e=>e.perCar).filter(Boolean).sort((a,b)=>b-a)[Math.floor(eff.length*0.25)];
+  const upl=eff.filter(e=>e.perCar&&e.perCar<medCar).map(e=>({...e,addRev:(medCar-e.perCar)*e.paid,addC:(medCar-e.perCar)*e.paid*e.cr})).sort((a,b)=>b.addC-a.addC);
+  const totNat=comp.reduce((s,o)=>s+o.toNat,0), totMed=comp.reduce((s,o)=>s+o.toMed,0), totInt=ops.reduce((s,o)=>s+o.amt,0), totEff=upl.reduce((s,o)=>s+o.addC,0);
+  const rv=k=>(BN.rules.find(r=>r.code===k)||{}).review||'';
+  el.insertAdjacentHTML('beforeend',`<div class="grid g4">${kpiCard({l:'追到全國（不含裕信）',v:Kw(totNat)+'<small>萬</small>',c:'各構面落後部分加總（落後才計）'})}${kpiCard({l:'追到同業中位數',v:Kw(totMed)+'<small>萬</small>',c:'同業 7 家中位數；元隆資產／營運費用口徑不同已排除'})}${kpiCard({l:'各廠追到裕信前 25%',v:Kw(totInt)+'<small>萬</small>',c:'內部標竿，最可執行'})}${kpiCard({l:'增效：單台營收追到中位數',v:Kw(totEff)+'<small>萬</small>',c:`以各廠貢獻率換算；中位數 ${Number(medCar).toFixed(1)} 千元／台`})}</div>
+   <div class="card mt"><h2>一、公司層級：裕信 vs 同業（五大構面）</h2><div class="tbl-wrap"><table><thead><tr><th>構面</th><th>類型</th><th class="n">裕信</th><th class="n">全國(不含裕信)</th><th class="n">同業中位數</th><th class="n">同業最佳</th><th class="n">追到全國（萬）</th><th class="n">追到中位數（萬）</th><th>改善方向</th><th>檢討方向（歸類基準）</th></tr></thead><tbody>${comp.map(o=>`<tr><td><b>${o.g.n}</b></td><td>${o.g.type}</td><td class="n">${pc(o.y)}</td><td class="n">${pc(o.n)}</td><td class="n">${pc(o.m)}</td><td class="n">${pc(o.b)}</td><td class="n ${o.toNat>0?'bad-t':''}">${o.toNat>0?Kw(o.toNat):'—（已優於）'}</td><td class="n">${o.toMed>0?Kw(o.toMed):'—'}</td><td style="font-size:12.5px;min-width:240px">${o.g.act}</td><td class="muted" style="font-size:12px;min-width:200px">${o.g.rv.map(rv).filter(Boolean).map(esc).join('<br>')}</td></tr>`).join('')}</tbody></table></div><div class="muted">「結構」類（資產使用）需中長期處理（租約、據點策略）；「可控」類可列月度改善目標</div></div>
+   <div class="grid g2 mt"><div class="card"><h2>二、各廠內部標竿：可改善金額 Top 15</h2><div class="tbl-wrap"><table><thead><tr><th>廠別</th><th>構面</th><th class="n">現況</th><th class="n">前25%水準</th><th class="n">金額（萬）</th></tr></thead><tbody>${ops.slice(0,15).map(o=>`<tr><td><b>${o.n}</b></td><td>${o.g.n}</td><td class="n">${pc(o.v)}</td><td class="n">${pc(o.t)}</td><td class="n bad-t">${Kw(o.amt)}</td></tr>`).join('')}</tbody></table></div></div>
+    <div class="card"><h2>各廠改善潛力合計</h2>${barList(tp.map(([n,a])=>({label:n,v:a*1000})))}<div class="muted">各構面追到裕信服務廠前 25% 的加總</div></div></div>
+   <div class="card mt"><h2>三、增效（營收面）：單台有費營收低於中位數的廠</h2><div class="tbl-wrap"><table><thead><tr><th>廠別</th><th class="n">單台有費營收（千元）</th><th class="n">中位數</th><th class="n">有費台數</th><th class="n">追到中位數：營收（萬）</th><th class="n">對應貢獻（萬）</th><th class="n">人均月營收（萬）</th></tr></thead><tbody>${upl.map(e=>`<tr><td><b>${e.n}</b></td><td class="n">${e.perCar.toFixed(1)}</td><td class="n">${medCar.toFixed(1)}</td><td class="n">${Y(e.paid)}</td><td class="n">${Kw(e.addRev)}</td><td class="n good-t">${Kw(e.addC)}</td><td class="n">${e.perHead?Kw(e.perHead):'—'}</td></tr>`).join('')}</tbody></table></div><div class="muted">單台有費營收＝零服營收 ÷ 有費台數（不含補償；營收含補償，僅供廠間相對比較）｜作法：定保套餐、附加銷售（油品、輪胎、美容）、鈑噴招攬；同時盯進廠台數</div></div>`);
+};
+/* 效率指標 */
+BPAGE.eff=(el)=>{
+  const sv=Object.keys(BN.plants).filter(n=>n!=='裕信合計'&&n!=='服務部本部');
+  const rows=sv.map(n=>{ const p=BN.plants[n]; return {n,rev:p.rev,perCar:p.paid?p.rev/p.paid:null,perHead:p.heads?p.rev/p.heads/8:null,perTech:p.dheads?p.rev/p.dheads/8:null,carsTech:p.dheads?(p.cars||0)/p.dheads/8:null,ratio:p.dheads?p.iheads/p.dheads:null,dpay:p.dpay,ipay:p.ipay,comp:p.cars?(p.comp||0)/p.cars:null,bp:/鈑噴/.test(n)}; });
+  const K=[['perCar','單台有費營收（千元）',v=>v.toFixed(1),1],['perHead','人均月營收（萬）',v=>Kw(v),1],['perTech','直接人員人均月營收（萬）',v=>Kw(v),1],['carsTech','每直接人員月進廠台數',v=>v.toFixed(1),1],['ratio','間接／直接人數比',v=>v.toFixed(2),-1],['dpay','直接人員月固薪（千元）',v=>v.toFixed(1),0],['ipay','間接人員月固薪（千元）',v=>v.toFixed(1),0],['comp','補償台數占比',v=>pc(v),0]];
+  const s=rows.filter(r=>!r.bp); const q=(k,dir)=>{ const a=s.map(r=>r[k]).filter(v=>v!=null).sort((x,y)=>dir*(y-x)); return [a[Math.floor(a.length*0.25)],a[Math.floor(a.length*0.75)]]; };
+  const bg=(r,k,dir)=>{ if(!dir||r.bp||r[k]==null) return ''; const [t,b]=q(k,dir); return dir*(r[k]-t)>=0?'background:color-mix(in srgb,var(--div-pos) 35%,transparent)':dir*(r[k]-b)<=0?'background:color-mix(in srgb,var(--div-neg) 30%,transparent)':''; };
+  el.insertAdjacentHTML('beforeend',`<div class="card"><h2>裕信各廠效率指標（${BN.period}）</h2><div class="tbl-wrap"><table><thead><tr><th>廠別</th><th class="n">營收（萬）</th>${K.map(k=>`<th class="n">${k[1]}</th>`).join('')}</tr></thead><tbody>${rows.sort((a,b)=>(a.bp-b.bp)||((b.perTech||0)-(a.perTech||0))).map(r=>`<tr><td><b>${r.n}</b>${r.bp?' <span class="tag neu">鈑噴中心</span>':''}</td><td class="n">${Kw(r.rev)}</td>${K.map(([k,,f,dir])=>`<td class="n" style="${bg(r,k,dir)}">${r[k]==null?'—':f(r[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></div><div class="muted">藍＝前 25%、紅＝後 25%（服務廠之間）｜人數為 1–8 月平均｜同業只有「單台有費營收」：全國 ${BN.dealers['全國'].perCar}、${PEERS.map(p=>`${p} ${BN.dealers[p].perCar}`).join('、')}（千元）</div></div>`);
+};
+/* 口徑與資料檢核 */
+BPAGE.rule=(el)=>{
+  el.insertAdjacentHTML('beforeend',`<div class="card"><h2>原表需更正／注意</h2><ul>
+   <li class="bad-t"><b>裕信零服淨利：</b>「淨利(含金額)」合計欄 128,762 千元，但各單位加總與「零服貢獻 − 分攤營運費用」皆為 124,011 千元（差 4,751，約等於本部其他費用 4,754）。淨利率應為 <b>14.2%</b>，不是 14.7%。本模組已更正。</li>
+   <li class="bad-t"><b>裕信進廠台數：</b>「淨利(占比)簡易解析」裕信欄「含補償」填 74,289、「不含補償」填 7,855；應為 <b>82,144（含補償）／74,289（不含補償）</b>，7,855 是補償台數。</li>
+   <li><b>各廠數字與儀表板核對：</b>各廠零服營收、毛利、外促、內促、固薪（直接／間接）與儀表板 2026/1–8 逐項一致。</li>
+   <li><b>口徑差異：</b>元隆不含特約服務廠、租金與折舊列總公司；裕新、裕民、匯聯、國通、裕昌把護照／抵用券折讓列成本；裕信代步車只列收益（支出在折舊）。本模組以「毛利＋外促」「人事合計」「資產使用合計」比較以降低口徑影響。</li>
+   <li><b>裕信(台北)／(新北)：</b>原表空白，本模組由各廠加總計算，分區假設見「台北 vs 新北」。</li></ul></div>
+   <div class="card mt"><h2>財務基礎資料歸類基準</h2><div class="tbl-wrap"><table><thead><tr><th>代號</th><th>項目</th><th>計算公式</th><th>定義</th><th>異常狀況建議檢討方向</th></tr></thead><tbody>${BN.rules.filter(r=>r.item).map(r=>`<tr><td>${esc(r.code)}</td><td>${esc(r.item)}</td><td>${esc(r.formula)}</td><td style="font-size:12.5px">${esc(r.define).replace(/\n/g,'<br>')}</td><td style="font-size:12.5px">${esc(r.review).replace(/\n/g,'<br>')}</td></tr>`).join('')}</tbody></table></div></div>
+   <div class="card mt"><h2>檢核明細</h2><div class="tbl-wrap"><table><thead><tr><th>項目</th><th class="n">原表</th><th class="n">計算</th><th class="n">差異</th></tr></thead><tbody>${BN.checks.map(c=>`<tr><td>${esc(c.item)}</td><td class="n">${c.book==null?'—':(Math.abs(c.book)<5?Number(c.book).toFixed(4):Y(c.book))}</td><td class="n">${c.calc==null?'—':(Math.abs(c.calc)<5?Number(c.calc).toFixed(4):Y(c.calc))}</td><td class="n ${c.diff&&Math.abs(c.diff)>(Math.abs(c.book||0)<5?0.0005:0.5)?'bad-t':'good-t'}">${c.diff&&Math.abs(c.diff)>(Math.abs(c.book||0)<5?0.0005:0.5)?(Math.abs(c.book||0)<5?Number(c.diff).toFixed(4):Y(c.diff)):'✓'}</td></tr>`).join('')}</tbody></table></div><div class="muted">單位：千元（比率列為小數）</div></div>`);
 };
 
 /* ================= 匯出 Excel（目前畫面） ================= */
