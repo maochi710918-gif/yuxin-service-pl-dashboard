@@ -1940,7 +1940,7 @@ function exportExcel(scope){
   const root=scope==='drawer'?dpanel:document.getElementById('page'); const wb=XLSX.utils.book_new(); const used=new Set();
   const c=ctx(); const {b}=effBase(c); const pg=(PAGES.find(p=>p[0]===S.page)||['',''])[1];
   const title=(root.querySelector('h1')||{}).innerText||pg;
-  const cond=[['項目','內容'],['報表',scope==='drawer'?`${pg}｜${title}`:pg],['年度',S.yr],['期間',perLabel(c)],['單位',entsLabel(c)],['比較基準',BASE_LABEL[b]+(c.ss?'（成長率與差額＝同店）':'')],
+  const cond=[['項目','內容'],['報表',scope==='drawer'?`${pg}｜${title}`:pg],['年度',S.yr],['期間',S.page==='bench'&&BN?BN.period+'（經銷商對標資料期間）':perLabel(c)],['單位',entsLabel(c)],['比較基準',BASE_LABEL[b]+(c.ss?'（成長率與差額＝同店）':'')],
     ['同店比較',S.ss&&S.yr===2026?`開啟${c.ss?'：比較時排除 '+c.ssOut.map(e=>ENT[e]).join('、'):''}`:'未開啟／不適用'],['併入單位',mergedTxt()],['資料來源',D.meta.src],['匯出時間',new Date().toLocaleString('zh-TW')],
     ['說明','金額單位依畫面（多數為萬元）；百分比已轉成數值格式；本檔為畫面當下的查詢結果']];
   addSheet(wb,used,'查詢條件',cond,[14,90]);
@@ -1957,7 +1957,7 @@ function exportExcel(scope){
     const toR=x=>[x.y,x.m,x.d,x.vno,x.b,x.code,x.t,x.s,x.v,x.c1,x.c2,x.dr,x.cr,x.a];
     addSheet(wb,used,'今年傳票（完整）',[H,...RAWEXP.cur.map(toR)]); if(RAWEXP.prev&&RAWEXP.prev.length) addSheet(wb,used,'去年同期傳票（完整）',[H,...RAWEXP.prev.map(toR)]); }
   if(used.size<=1){ alert('這個畫面沒有可匯出的表格'); return; }
-  const fn=`服務部戰情_${(scope==='drawer'?title:pg).replace(/[\\\/:*?"<>|｜]/g,'_').slice(0,30)}_${S.yr}_${c.m0}-${c.m1}月.xlsx`;
+  const fn=`服務部戰情_${(scope==='drawer'?title:pg).replace(/[\\\/:*?"<>|｜]/g,'_').slice(0,30)}_${S.page==='bench'&&BN?BN.period.replace(/[\/／]/g,'_'):S.yr+'_'+c.m0+'-'+c.m1+'月'}.xlsx`;
   XLSX.writeFile(wb,fn);
 }
 
