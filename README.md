@@ -20,7 +20,7 @@
 
 ## 經銷商對標模組（19）
 
-資料來源：`損益/2026年經銷商與裕信各廠別損益表_*.xlsx`。更新方式：先跑 `python build.py`，再跑 `python build_bench.py "對標檔.xlsx"`（會把對標資料併入 data.json），最後照下方第 3 步加密。
+資料來源：`谷戰報/2026年裕信各廠別損益表_*.xlsx`（含經銷商對標、台數、民權 UIO、補償、獎金、外促、人事、費用說明與「服務部-據點」全科目）。更新方式：先跑 `python build.py`，再跑 `python build_bench.py "對標檔.xlsx"`（會把對標資料併入 data.json；說明工作表由 `bench_detail.py` 解析），最後照下方第 3 步加密。
 
 ## 如何更新資料
 

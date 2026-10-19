@@ -3,17 +3,18 @@
 用法：python build_bench.py "對標檔.xlsx"   （需先跑 build.py 產生 data.json）"""
 import openpyxl, json, os, sys, shutil, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = sys.argv[1] if len(sys.argv) > 1 else r'C:\Users\ES\OneDrive\桌面\AI參照\損益\2026年經銷商與裕信各廠別損益表_115.10.06.xlsx'
+SRC = sys.argv[1] if len(sys.argv) > 1 else r'C:\Users\ES\OneDrive\桌面\AI參照\谷戰報\2026年裕信各廠別損益表_115.10.06 的複本.xlsx'
 tmp = os.path.join(tempfile.gettempdir(), '_bench_src.xlsx'); shutil.copyfile(SRC, tmp)
-wb = openpyxl.load_workbook(tmp, data_only=True)
+wb = openpyxl.load_workbook(tmp, data_only=True, read_only=True)
+SHEETS = wb.sheetnames
 num = lambda x: float(x) if isinstance(x, (int, float)) else None
 
-# ---- 1. 歸類基準 ----
-ws = wb['財務基礎資料歸類基準']
+# ---- 1. 歸類基準（新版檔案沒有此表時，沿用前一版 data.json 內的基準）----
 rules = []
-for r in ws.iter_rows(min_row=3, values_only=True):
-    if r[1] or r[2]:
-        rules.append(dict(code=r[1] or '', item=(r[2] or '').strip(), formula=r[4] or r[3] or '', define=r[5] or '', review=r[6] or ''))
+if '財務基礎資料歸類基準' in SHEETS:
+    for r in wb['財務基礎資料歸類基準'].iter_rows(min_row=3, values_only=True):
+        if r[1] or r[2]:
+            rules.append(dict(code=r[1] or '', item=(r[2] or '').strip(), formula=r[4] or r[3] or '', define=r[5] or '', review=r[6] or ''))
 
 # ---- 2. 經銷商比例（淨利(占比)簡易解析）----
 LINES = [('rev', '零服營收'), ('cost', '零服成本'), ('gp', '零服毛利'), ('bonus', '零服獎金補助'), ('dc', '零服直接成本'), ('ext', '零服外促費用'),
@@ -108,6 +109,7 @@ checks.append(dict(item='經銷商表「裕信」零服淨利率（原表 vs 重
 
 # ---- 4. 與儀表板損益資料（2026/1–8）逐廠核對 ----
 D = json.load(open(os.path.join(HERE, 'data.json'), encoding='utf-8'))
+if not rules and D.get('bench', {}).get('rules'): rules = D['bench']['rules']
 ENT = D['meta']['ent']; by = {}
 for a in D['acc']: by.setdefault(a['c'], a)
 def ours(code, ent, months=range(8)):
@@ -121,7 +123,10 @@ for nm, p in plants.items():
         if abs(o - p.get(k, 0)) > 1.5: checks.append(dict(item=f'{nm}：{k} 對標檔 vs 儀表板', book=p.get(k), calc=o, diff=(p.get(k) or 0) - o))
 checks.append(dict(item='各廠營收、毛利、外促、內促、固薪（直接／間接）與儀表板 2026/1–8 逐項核對', book=None, calc=None, diff=0))
 
-bench = dict(src=os.path.basename(SRC), period='2026/1–8月', unit='千元(K)', lines=LINES, rules=rules, notes=notes,
+sys.path.insert(0, HERE)
+from bench_detail import extract_detail
+detail = extract_detail(wb, D, checks)
+bench = dict(detail=detail, src=os.path.basename(SRC), period='2026/1–8月', unit='千元(K)', lines=LINES, rules=rules, notes=notes,
              dealers=dealers, dealer_book_yx=yx_book, plants=plants, checks=checks)
 D['bench'] = bench
 json.dump(D, open(os.path.join(HERE, 'data.json'), 'w', encoding='utf-8'), ensure_ascii=False, separators=(',', ':'))
