@@ -469,7 +469,7 @@ function acctDeltas(c,b){ c=cmpC(c);
 const PAGES=[
  ['ceo','CEO 經營總覽'],['pl','損益總覽'],['trend','月度趨勢'],['branch','廠別經營'],['rev','收入分析'],['cost','成本分析'],
  ['exp','費用分析'],['promo','廣促費解剖'],['act','活動費分析'],['money','Money Flow'],['bridge','損益 Bridge'],['yoy','同期比較'],
- ['radar','異常雷達'],['cross','交叉分析'],['ai','AI 經營診斷'],['raw','原始明細'],['recon','資料勾稽'],['hr','人事成本效益'],['bench','經銷商對標・降本增效']];
+ ['radar','異常雷達'],['cross','交叉分析'],['ai','AI 經營診斷'],['raw','原始明細'],['recon','資料勾稽'],['hr','人事成本效益'],['bench','經銷商對標・降本增效'],['ynm','YNM管理']];
 function buildNav(){ document.getElementById('navlist').innerHTML=PAGES.map((p,i)=>`${p[0]==='hr'?'<hr><div class="muted" style="padding:0 10px 4px">獨立模組</div>':''}<a data-p="${p[0]}" class="${S.page===p[0]?'on':''}"><span class="no">${String(i+1).padStart(2,'0')}</span>${p[1]}</a>`).join('');
   document.querySelectorAll('#navlist a').forEach(a=>a.onclick=()=>{S.page=a.dataset.p; document.getElementById('side').classList.remove('open'); render();}); }
 
@@ -2130,6 +2130,92 @@ BPAGE.rule=(el)=>{
    <li><b>裕信(台北)／(新北)：</b>原表空白，本模組由各廠加總計算，分區假設見「台北 vs 新北」。</li></ul></div>
    <div class="card mt"><h2>財務基礎資料歸類基準</h2><div class="tbl-wrap"><table><thead><tr><th>代號</th><th>項目</th><th>計算公式</th><th>定義</th><th>異常狀況建議檢討方向</th></tr></thead><tbody>${BN.rules.filter(r=>r.item).map(r=>`<tr><td>${esc(r.code)}</td><td>${esc(r.item)}</td><td>${esc(r.formula)}</td><td style="font-size:12.5px">${esc(r.define).replace(/\n/g,'<br>')}</td><td style="font-size:12.5px">${esc(r.review).replace(/\n/g,'<br>')}</td></tr>`).join('')}</tbody></table></div></div>
    <div class="card mt"><h2>檢核明細</h2><div class="tbl-wrap"><table><thead><tr><th>項目</th><th class="n">原表</th><th class="n">計算</th><th class="n">差異</th></tr></thead><tbody>${BN.checks.map(c=>`<tr><td>${esc(c.item)}</td><td class="n">${c.book==null?'—':(Math.abs(c.book)<5?Number(c.book).toFixed(4):Y(c.book))}</td><td class="n">${c.calc==null?'—':(Math.abs(c.calc)<5?Number(c.calc).toFixed(4):Y(c.calc))}</td><td class="n ${c.diff&&Math.abs(c.diff)>(Math.abs(c.book||0)<5?0.0005:0.5)?'bad-t':'good-t'}">${c.diff&&Math.abs(c.diff)>(Math.abs(c.book||0)<5?0.0005:0.5)?(Math.abs(c.book||0)<5?Number(c.diff).toFixed(4):Y(c.diff)):'✓'}</td></tr>`).join('')}</tbody></table></div><div class="muted">單位：千元（比率列為小數）</div></div>`);
+};
+
+/* ================= YNM 管理・UIO 保有分析（獨立模組） =================
+   資料來源：D.ynmUio（build_ynm_uio.py 合併），結構：
+   { src, curLabel, preLabel, cur:{ageLabels,freqRows,zoneRows,bandRows}, pre:{同上}, diff:{同上，數值為 本期-去年同期} }
+   cur/pre/diff 三份資料逐欄逐列已在 build 階段核對過加總一致，前端只負責呈現，不重算。 */
+let YNMTAB='ov', YNMPER='cur';
+const YNMTABS=[['ov','總覽'],['matrix','車齡×頻度矩陣'],['zone','區域分布(綠黃紅)'],['band','車齡區間彙總'],['cmp','同期差異明細']];
+const YNMP={};
+const ynmZoneTag=z=>z==='綠區'?'good':z==='黃區'?'warn':z==='紅區'?'bad':'neu';
+
+R.ynm=el=>{
+  const U=D.ynmUio; if(!U){ head(el,'YNM 管理','原表無 UIO 保有統計資料'); return; }
+  head(el,'YNM 管理・UIO 保有分析',`資料：${esc(U.src)}｜本期 ${esc(U.curLabel)} vs 去年同期 ${esc(U.preLabel)}｜本模組期間固定為來源表期間，不受上方篩選影響`);
+  el.insertAdjacentHTML('beforeend',`<div style="display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-bottom:12px">
+    <span class="seg" id="ynmtab" style="flex-wrap:wrap">${YNMTABS.map(t=>`<button data-k="${t[0]}" class="${YNMTAB===t[0]?'on':''}">${t[1]}</button>`).join('')}</span>
+    ${YNMTAB==='matrix'||YNMTAB==='zone'||YNMTAB==='band'?`<span class="fg">期間 <span class="seg" id="ynmper">${[['cur',U.curLabel],['pre',U.preLabel]].map(p=>`<button data-k="${p[0]}" class="${YNMPER===p[0]?'on':''}">${esc(p[1])}</button>`).join('')}</span></span>`:''}
+  </div>`);
+  el.querySelectorAll('#ynmtab button').forEach(b=>b.onclick=()=>{YNMTAB=b.dataset.k;render();});
+  const perSel=el.querySelector('#ynmper'); if(perSel) perSel.querySelectorAll('button').forEach(b=>b.onclick=()=>{YNMPER=b.dataset.k;render();});
+  const box=document.createElement('div'); el.appendChild(box);
+  (YNMP[YNMTAB]||YNMP.ov)(box,U);
+};
+
+YNMP.ov=(el,U)=>{
+  const cz=U.cur.zoneRows, pz=U.pre.zoneRows, dz=U.diff.zoneRows;
+  const curTot=cz['總UIO'].subtotal, preTot=pz['總UIO'].subtotal, diffTot=dz['總UIO'].subtotal;
+  const curRate=cz['綠區保留率'].subtotal, preRate=pz['綠區保留率'].subtotal;
+  el.insertAdjacentHTML('beforeend',`<div class="grid g4">
+   ${kpiCard({l:'總 UIO（本期）',v:Y(curTot),c:`去年同期 ${Y(preTot)}｜同期差異 ${diffTot>=0?'+':''}${Y(diffTot)} 台`})}
+   ${kpiCard({l:'綠區保留率（本期）',v:pc(curRate),tag:`<span class="tag ${curRate>=preRate?'good':'bad'}">${curRate>=preRate?'優於':'低於'}去年</span>`,c:`去年同期 ${pc(preRate)}`})}
+   ${kpiCard({l:'綠區台數（本期）',v:Y(cz['綠區'].subtotal),c:`去年同期 ${Y(pz['綠區'].subtotal)}｜佔比 ${pc(cz['綠區'].subtotal/curTot)}`})}
+   ${kpiCard({l:'紅區台數（本期）',v:Y(cz['紅區'].subtotal),c:`去年同期 ${Y(pz['紅區'].subtotal)}｜佔比 ${pc(cz['紅區'].subtotal/curTot)}`})}
+  </div>
+  <div class="card mt"><h2>綠／黃／紅分區佔比（本期 vs 去年同期）</h2>
+   <div class="tbl-wrap"><table><thead><tr><th>分區</th><th class="n">本期台數</th><th class="n">本期佔比</th><th class="n">去年同期台數</th><th class="n">去年同期佔比</th><th class="n">同期差異</th></tr></thead><tbody>
+   ${['綠區','黃區','紅區'].map(z=>{ const c=cz[z].subtotal, p=pz[z].subtotal, d=dz[z].subtotal;
+     return `<tr><td><span class="tag ${ynmZoneTag(z)}">${z}</span></td><td class="n">${Y(c)}</td><td class="n">${pc(c/curTot)}</td><td class="n">${Y(p)}</td><td class="n">${pc(p/preTot)}</td><td class="n ${d>=0?'good-t':'bad-t'}">${d>=0?'+':''}${Y(d)}</td></tr>`; }).join('')}
+   <tr class="lv1"><td>總計</td><td class="n">${Y(curTot)}</td><td class="n">100%</td><td class="n">${Y(preTot)}</td><td class="n">100%</td><td class="n ${diffTot>=0?'good-t':'bad-t'}">${diffTot>=0?'+':''}${Y(diffTot)}</td></tr>
+   </tbody></table></div></div>
+  <div class="card mt ai"><h2 style="color:var(--accent)">怎麼看</h2>
+   <p>本期（${esc(U.curLabel)}）YNM 全網總 UIO（保有客戶車輛）共 <b>${Y(curTot)} 台</b>，較去年同期（${esc(U.preLabel)}）<b>${Y(preTot)} 台</b>${diffTot>=0?'成長':'減少'} <b>${Y(Math.abs(diffTot))} 台</b>（${SP(preTot?diffTot/preTot:null)}）。</p>
+   <p>整體綠區保留率（健康回廠客群佔比）本期 <b>${pc(curRate)}</b>，去年同期 <b>${pc(preRate)}</b>，${curRate>=preRate?'較去年提升':'較去年下滑'}；紅區（長期流失風險客群）佔比本期 <b>${pc(cz['紅區'].subtotal/curTot)}</b>，建議優先針對車齡較長的紅區客群規劃回廠招攬與定保提醒。</p></div>`);
+};
+
+YNMP.matrix=(el,U)=>{
+  const P=U[YNMPER]; const labels=P.ageLabels;
+  el.insertAdjacentHTML('beforeend',`<div class="card"><h2>回廠頻度 × 車齡分級 台數矩陣（${esc(U[YNMPER==='cur'?'curLabel':'preLabel'])}）</h2>
+   <div class="tbl-wrap"><table class="heat"><thead><tr><th>回廠頻度</th>${labels.map(l=>`<th class="n">${esc(l)}</th>`).join('')}<th class="n">小計</th><th class="n">佔比</th></tr></thead><tbody>
+   ${P.freqRows.map(r=>`<tr><td>${esc(r.label)}（${esc(r.code)}）</td>${r.v.map(x=>`<td class="n">${x==null?'—':Y(x)}</td>`).join('')}<td class="n"><b>${Y(r.subtotal)}</b></td><td class="n">${r.pct==null?'—':r.pct.toFixed(2)+'%'}</td></tr>`).join('')}
+   <tr class="lv1"><td>總 UIO</td>${P.zoneRows['總UIO'].v.map(x=>`<td class="n">${Y(x)}</td>`).join('')}<td class="n">${Y(P.zoneRows['總UIO'].subtotal)}</td><td class="n">100%</td></tr>
+   </tbody></table></div><div class="muted">回廠頻度代碼依原表（A~Q、Z）；車齡第一欄（≤2月）原表未分年齡標籤，故照原表留白車齡；小計/佔比取自原表、未重算</div></div>`);
+};
+
+YNMP.zone=(el,U)=>{
+  const P=U[YNMPER]; const labels=P.ageLabels; const tot=P.zoneRows['總UIO'];
+  el.insertAdjacentHTML('beforeend',`<div class="card"><h2>分區台數 × 車齡分級（${esc(U[YNMPER==='cur'?'curLabel':'preLabel'])}）</h2>
+   <div class="tbl-wrap"><table class="heat"><thead><tr><th>分區</th>${labels.map(l=>`<th class="n">${esc(l)}</th>`).join('')}<th class="n">小計</th></tr></thead><tbody>
+   ${['綠區','黃區','紅區'].map(z=>`<tr><td><span class="tag ${ynmZoneTag(z)}">${z}</span></td>${P.zoneRows[z].v.map(x=>`<td class="n">${Y(x)}</td>`).join('')}<td class="n"><b>${Y(P.zoneRows[z].subtotal)}</b></td></tr>`).join('')}
+   <tr class="lv1"><td>總 UIO</td>${tot.v.map(x=>`<td class="n">${Y(x)}</td>`).join('')}<td class="n">${Y(tot.subtotal)}</td></tr>
+   <tr><td>綠區保留率</td>${P.zoneRows['綠區保留率'].v.map(x=>`<td class="n">${x==null?'—':pc(x)}</td>`).join('')}<td class="n"><b>${pc(P.zoneRows['綠區保留率'].subtotal)}</b></td></tr>
+   </tbody></table></div><div class="muted">綠區保留率＝綠區台數 ÷ 該車齡總 UIO；車齡愈長保留率自然遞減，重點看同車齡區間跨期變化（見「同期差異明細」頁籤）</div></div>`);
+};
+
+YNMP.band=(el,U)=>{
+  const P=U[YNMPER]; const B=P.bandRows;
+  const cols=[['y1_3','1-3Y'],['y4_6','4-6Y'],['y7_13','7-13Y'],['y1_13','1-13Y'],['y14p','14Y以上']];
+  el.insertAdjacentHTML('beforeend',`<div class="card"><h2>車齡區間彙總（${esc(U[YNMPER==='cur'?'curLabel':'preLabel'])}）</h2>
+   <div class="tbl-wrap"><table><thead><tr><th>分區</th>${cols.map(c=>`<th class="n">${c[1]}</th>`).join('')}<th class="n">小計</th><th class="n">佔比</th></tr></thead><tbody>
+   ${['綠區','黃區','紅區','小計'].map(z=>{ const r=B[z]; if(!r) return ''; const fmt=x=>x==null?'—':Y(x);
+     return `<tr class="${z==='小計'?'lv1':''}"><td>${z==='小計'?'小計':`<span class="tag ${ynmZoneTag(z)}">${z}</span>`}</td>${cols.map(c=>`<td class="n">${fmt(r[c[0]])}</td>`).join('')}<td class="n"><b>${fmt(r.subtotal)}</b></td><td class="n">${r.pct==null?'—':r.pct.toFixed(1)+'%'}</td></tr>`; }).join('')}
+   <tr><td>綠區保留率</td>${cols.map(c=>`<td class="n">${B['綠區保留率'][c[0]]==null?'—':pc(B['綠區保留率'][c[0]])}</td>`).join('')}<td class="n"><b>${pc(B['綠區保留率'].subtotal)}</b></td><td class="n">—</td></tr>
+   </tbody></table></div><div class="muted">依 1-3Y／4-6Y／7-13Y／14Y以上 四個車齡區間彙總；1-13Y 為前三者合計，取自原表、未重算</div></div>`);
+};
+
+YNMP.cmp=(el,U)=>{
+  const D1=U.diff; const labels=D1.ageLabels; const mx=Math.max(1,...D1.zoneRows['總UIO'].v.map(x=>Math.abs(x||0)));
+  el.insertAdjacentHTML('beforeend',`<div class="card"><h2>回廠頻度 × 車齡分級 同期差異（${esc(U.curLabel)} − ${esc(U.preLabel)}，原表數字，未重算）</h2>
+   <div class="tbl-wrap"><table class="heat"><thead><tr><th>回廠頻度</th>${labels.map(l=>`<th class="n">${esc(l)}</th>`).join('')}<th class="n">小計差異</th></tr></thead><tbody>
+   ${D1.freqRows.map(r=>`<tr><td>${esc(r.label)}（${esc(r.code)}）</td>${r.v.map(x=>`<td class="n" style="${heatBg(x,mx)}">${x==null?'—':(x>=0?'+':'')+Y(x)}</td>`).join('')}<td class="n ${r.subtotal>=0?'good-t':'bad-t'}">${r.subtotal>=0?'+':''}${Y(r.subtotal)}</td></tr>`).join('')}
+   <tr class="lv1"><td>總 UIO 差異</td>${D1.zoneRows['總UIO'].v.map(x=>`<td class="n ${x>=0?'good-t':'bad-t'}">${x>=0?'+':''}${Y(x)}</td>`).join('')}<td class="n ${D1.zoneRows['總UIO'].subtotal>=0?'good-t':'bad-t'}">${D1.zoneRows['總UIO'].subtotal>=0?'+':''}${Y(D1.zoneRows['總UIO'].subtotal)}</td></tr>
+   </tbody></table></div><div class="muted">底色：藍＝較去年同期成長、紅＝較去年同期減少（深淺依差異量，同一欄內比較）；數字直接取自原表「UIO台數26vs25」，不是本頁重算</div></div>
+  <div class="card mt"><h2>分區台數同期差異</h2>
+   <div class="tbl-wrap"><table><thead><tr><th>分區</th>${labels.map(l=>`<th class="n">${esc(l)}</th>`).join('')}<th class="n">小計差異</th></tr></thead><tbody>
+   ${['綠區','黃區','紅區'].map(z=>`<tr><td><span class="tag ${ynmZoneTag(z)}">${z}</span></td>${D1.zoneRows[z].v.map(x=>`<td class="n ${x>=0?'good-t':'bad-t'}">${x>=0?'+':''}${Y(x)}</td>`).join('')}<td class="n ${D1.zoneRows[z].subtotal>=0?'good-t':'bad-t'}">${D1.zoneRows[z].subtotal>=0?'+':''}${Y(D1.zoneRows[z].subtotal)}</td></tr>`).join('')}
+   </tbody></table></div></div>`);
 };
 
 /* ================= 匯出 Excel（目前畫面） ================= */
