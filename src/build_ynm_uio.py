@@ -24,7 +24,7 @@ import openpyxl
 HERE = Path(__file__).resolve().parent
 DATA_JSON = HERE / "data.json"
 
-DEFAULT_SRC = Path(r"C:\Users\ES\OneDrive\桌面\AI參照\谷戰報\2608UIO保有統計.xlsx")
+DEFAULT_SRC = Path(r"C:\Users\ES\OneDrive\桌面\AI參照\A谷戰報\2608UIO保有統計.xlsx")
 DEFAULT_SHEET_CUR = "UIO台數2608"   # 本期（2026/8）
 DEFAULT_SHEET_PRE = "UIO台數2508"   # 去年同期（2025/8）
 DEFAULT_SHEET_DIFF = "UIO台數26vs25"  # 原表自帶的同期差異，直接採用，不自己重算

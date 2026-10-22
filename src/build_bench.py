@@ -3,7 +3,7 @@
 用法：python build_bench.py "對標檔.xlsx"   （需先跑 build.py 產生 data.json）"""
 import openpyxl, json, os, sys, shutil, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = sys.argv[1] if len(sys.argv) > 1 else r'C:\Users\ES\OneDrive\桌面\AI參照\谷戰報\2026年裕信各廠別損益表_115.10.06 的複本.xlsx'
+SRC = sys.argv[1] if len(sys.argv) > 1 else r'C:\Users\ES\OneDrive\桌面\AI參照\A谷戰報\2026年裕信各廠別損益表_115.10.06 的複本.xlsx'
 tmp = os.path.join(tempfile.gettempdir(), '_bench_src.xlsx'); shutil.copyfile(SRC, tmp)
 wb = openpyxl.load_workbook(tmp, data_only=True, read_only=True)
 SHEETS = wb.sheetnames
@@ -126,7 +126,49 @@ checks.append(dict(item='各廠營收、毛利、外促、內促、固薪（直�
 sys.path.insert(0, HERE)
 from bench_detail import extract_detail
 detail = extract_detail(wb, D, checks)
-bench = dict(detail=detail, src=os.path.basename(SRC), period='2026/1–8月', unit='千元(K)', lines=LINES, rules=rules, notes=notes,
+
+# ---- 5. 服務部損益說明 V2（正式說明版）：覆蓋 全國／裕信／台北／新北 比例與裕信金額 ----
+V2SRC = sys.argv[2] if len(sys.argv) > 2 else r'C:\Users\ES\OneDrive\桌面\AI參照\A谷戰報\服務部損益說明V2 的複本.xlsx'
+v2 = None
+if os.path.exists(V2SRC):
+    from bench_detail import extract_v2
+    v2 = extract_v2(V2SRC)
+    zs = [r for r in v2['rows'] if r['sec'] == '零服' and r['key']]
+    for col, dn in {'nat': '全國', 'natx': '全國(不含裕信)', 'yx': '裕信', 'tp': '裕信(台北)', 'nb': '裕信(新北)',
+                    'yx25': '裕信(2025同期)', 'tp25': '裕信(台北)(2025同期)', 'nb25': '裕信(新北)(2025同期)'}.items():
+        d = dealers.setdefault(dn, {})
+        for r in zs:
+            k = r['key']; kv = r['k'].get(col); rv = r['r'].get(col)
+            if k == 'rev': d['rev'] = kv if kv is not None else rv
+            elif k == 'nm': d['nm'] = rv; d['net'] = kv
+            elif rv is not None: d[k] = rv
+    for r in v2['rows']:
+        if r['n'].startswith('進廠台數') and '含補償' in r['n'] and '不含' not in r['n']:
+            for col, dn in {'yx': '裕信', 'tp': '裕信(台北)', 'nb': '裕信(新北)'}.items(): dealers[dn]['cars'] = r['k'][col]
+        if '不含補償' in r['n']:
+            for col, dn in {'yx': '裕信', 'tp': '裕信(台北)', 'nb': '裕信(新北)'}.items(): dealers[dn]['paid'] = r['k'][col]
+        if r['n'].startswith('單台有費營收'):
+            for col, dn in {'nat': '全國', 'natx': '全國(不含裕信)', 'yx': '裕信', 'tp': '裕信(台北)', 'nb': '裕信(新北)'}.items():
+                if r['k'][col] is not None: dealers[dn]['perCar'] = r['k'][col]
+    # 裕信合計金額改用 V2，本部＝合計 − 各廠
+    Kyx = {r['key']: r['k']['yx'] for r in zs}
+    others = [n for n in plants if n not in ('裕信合計', '服務部本部')]
+    for k in ['rent', 'dep', 'adm', 'promo', 'oth', 'car']:
+        if Kyx.get(k) is None: continue
+        tot[k] = -Kyx[k]
+        plants['服務部本部'][k] = tot[k] - sum(plants[n].get(k, 0) for n in others)
+    tot['E'] = -Kyx['E']; plants['服務部本部']['E'] = tot['E'] - sum(plants[n].get('E', 0) for n in others)
+    tot['net'] = Kyx['nm']; plants['服務部本部']['net'] = plants['服務部本部']['C'] - plants['服務部本部']['E']
+    # 檢核：V2 與全科目表（服務部-據點）
+    pl = detail.get('pl'); acct = lambda c: next((r['v'][pl['units'].index('合計')] for r in pl['rows'] if r['c'] == c), None) / 1000 if pl else None
+    if pl:
+        ind = acct('49020'); rent_book = acct('4901010') - acct('611102')
+        checks.append(dict(item=f'【V2 已更正】原各廠表「服務部本部」其他費用含間接人事費用（49020，{ind:,.0f}K），不屬零服淨利定義（租金、折舊、事務、推廣、其他）；V2 排除後，裕信零服淨利 {Kyx["nm"]:,.0f}K（{dealers["裕信"]["nm"]*100:.1f}%）。先前以各廠加總 124,011K 更正的作法撤回。', book=None, calc=None, diff=0))
+        checks.append(dict(item=f'【待確認】V2 一般租金 {-Kyx["rent"]:,.0f}K，帳上（4901010 − 代步車租金 611102）為 {rent_book:,.0f}K，少 {rent_book + Kyx["rent"]:,.0f}K，剛好等於代步車淨收入 {Kyx["car"]:,.0f}K；而代步車淨收入已計入零服貢獻，疑似重複扣抵，零服淨利可能高估 {rent_book + Kyx["rent"]:,.0f}K', book=rent_book, calc=-Kyx['rent'], diff=rent_book + Kyx['rent']))
+    for c in checks:
+        if c['item'].startswith('裕信合計欄 vs 各單位加總：net') or c['item'].startswith('裕信合計：零服淨利 ≠'):
+            c['item'] += '（原因：本部欄含間接人事費用；V2 已更正，見下方）'
+bench = dict(detail=detail, v2=v2, src=os.path.basename(SRC), period='2026/1–8月', unit='千元(K)', lines=LINES, rules=rules, notes=notes,
              dealers=dealers, dealer_book_yx=yx_book, plants=plants, checks=checks)
 D['bench'] = bench
 json.dump(D, open(os.path.join(HERE, 'data.json'), 'w', encoding='utf-8'), ensure_ascii=False, separators=(',', ':'))

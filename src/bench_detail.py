@@ -249,3 +249,46 @@ def extract_detail(wb, D, checks):
                                 f'並另列單位 {"、".join(f"{u}（營業利益 {v:,.0f} 元）" for u, v in ex_op.items())}；兩者合計等於本部的差異 {round(byu.get("服務部本部", 0)):,} 元，服務部合計不變',
                            book=ok + bad, calc=ok, diff=bad))
     return det
+
+
+V2_KEYS = {'零服營收': 'rev', '零服成本': 'cost', '零服毛利': 'gp', '零服獎金補助': 'bonus', '零服外促費用': 'ext', '零服內促費用': 'int',
+           '服務廠固定薪(直接)': 'fixd', '服務廠固定薪(間接)': 'fixi', '零件存貨跌價損失': 'inv', '租金支出-代步車': 'car', '租金支出-一般.': 'rent',
+           '折舊與攤提費用': 'dep', '事務費用': 'adm', '推廣費用': 'promo', '零服淨利': 'nm', '零服吸收率(%)': 'absorb', '零服直接成本': 'dc'}
+
+
+def extract_v2(path):
+    """服務部損益說明 V2：逐科目 全國／全國(不含裕信)／裕信／台北／新北／最優 DLR／去年同期 + 專責部門、優劣、說明、對策、內部備註"""
+    import openpyxl, shutil, tempfile, os
+    tmp = os.path.join(tempfile.gettempdir(), '_v2_src.xlsx'); shutil.copyfile(path, tmp)
+    wb = openpyxl.load_workbook(tmp, data_only=True, read_only=True)
+    rs = [list(r) for r in wb[wb.sheetnames[0]].iter_rows(values_only=True)]
+    title = txt(rs[0][1]).split('\n')[0] if rs else ''
+    out = []; sec = '新車與周邊'; grp = ''; sub_n = 0
+    for r in rs[2:]:
+        c1, c2 = txt(cell(r, 1)), txt(cell(r, 2))
+        lab = c2 or c1
+        if not lab or lab.endswith('!A1'):
+            lab = c2 if c2 and not c2.endswith('!A1') else (txt(cell(r, 3)) if c2.endswith('!A1') else lab)
+        if c2.endswith('!A1'): lab = txt(cell(r, 3))
+        if not lab: continue
+        if lab == '保有UIO數(台)': sec = '服務量能'
+        if lab == '零服營收': sec = '零服'; sub_n = 0
+        if c2 and c1: grp = c1
+        elif c1 and not c2: grp = ''
+        key = V2_KEYS.get(lab)
+        if sec == '零服' and lab == '小計':
+            sub_n += 1; key = 'C' if sub_n == 1 else 'E'
+        if sec == '零服' and lab.startswith('其他費用'): key = 'oth'
+        n = lambda i: num(cell(r, i))
+        if sec != '零服': key = None
+        if grp.endswith('!A1'): grp = ''
+        if all(n(i) is None for i in (3, 4, 5, 6, 8, 9, 15, 17, 35)): continue
+        ex = txt(cell(r, 12)) == '優/劣'  # 原表第一列為填寫範例
+        out.append(dict(sec=sec, grp=grp, n=lab, key=key, dir=txt(cell(r, 0)),
+                        k=dict(nat=n(3), natx=n(5), yx=n(8), tp=n(15), nb=n(17), yx25=n(35), tp25=n(37), nb25=n(39)),
+                        r=dict(nat=n(4), natx=n(6), yx=n(9), tp=n(16), nb=n(18), best=n(19), yx25=n(36), tp25=n(38), nb25=n(40)),
+                        best=txt(cell(r, 20)),
+                        d=dict(yx=[n(23), n(24), n(25)], tp=[n(27), n(28), n(29)], nb=[n(31), n(32), n(33)]),
+                        dept=txt(cell(r, 10)), factor='' if ex else txt(cell(r, 11)), judge='' if ex else txt(cell(r, 12)), expl='' if ex else txt(cell(r, 13)), act='' if ex else txt(cell(r, 14)),
+                        internal=txt(cell(r, 41)), extra=txt(cell(r, 42))))
+    return dict(src=os.path.basename(path), title=title, rows=out)

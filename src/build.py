@@ -4,7 +4,7 @@ import openpyxl, json, re, sys
 import pandas as pd, os, shutil, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-SRC = sys.argv[1] if len(sys.argv) > 1 else r'C:\Users\ES\OneDrive\桌面\AI參照\谷戰報\2026損益表.xlsx'
+SRC = sys.argv[1] if len(sys.argv) > 1 else r'C:\Users\ES\OneDrive\桌面\AI參照\A谷戰報\2026損益表.xlsx'
 _tmp = os.path.join(tempfile.gettempdir(), '_svc_pl_src.xlsx'); shutil.copyfile(SRC, _tmp)  # 避免 Excel 開啟中被鎖定
 SRC_NAME = os.path.basename(SRC); SRC = _tmp
 wb = openpyxl.load_workbook(SRC, data_only=True)
