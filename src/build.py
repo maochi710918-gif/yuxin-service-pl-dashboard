@@ -48,6 +48,7 @@ for i in range(start, end + 1):
     b26 = num(ws.cell(i, 25).value); a25 = num(ws.cell(i, 27).value); a24 = num(ws.cell(i, 29).value)
     indent = ws.cell(i, 6).alignment.indent or 0
     mrow = ws.cell(i, 4).value  # 月表列號
+    if not isinstance(mrow, int) and ws5 is not None and code_s(ws5.cell(i, 5).value) == c: mrow = ws5.cell(i, 4).value  # 2026 總表列號空白 → 用 2025 總表同列
     if c in MG and c not in used_mg:
         used_mg.add(c); lvl = MG[c]; last_mg = (lvl, len(accts)); last_grp = (lvl, len(accts))
     elif indent == 0:
@@ -118,7 +119,8 @@ KPI_ROWS = {'保修進廠台數': 1453, '有費台數(不含補償)': 1454, '補
             '服務廠直接人數': 1463, '服務廠間接人數': 1464}
 for k, xr in KPI_ROWS.items():
     mrow = ws.cell(xr, 4).value
-    svc = [num(ws.cell(xr, 7 + m).value) for m in range(NM)]
+    if not isinstance(mrow, int) and ws5 is not None: mrow = ws5.cell(xr, 4).value  # 2026 總表月表列號空白時，用 2025 總表同列
+    svc =[num(ws.cell(xr, 7 + m).value) for m in range(NM)]
     vals = []
     for mi, sh in enumerate(MONTH_SHEETS):
         wsm = wb[sh]; hdr = [str(h.value).strip() if h.value else '' for h in wsm[1]]
@@ -273,7 +275,10 @@ def vendor(s):
     if m and m.group(1) not in NOT_VENDOR: return m.group(1)
     return ''
 # 成本中心 → 損益表單位（16 廠依「單位」名稱；其餘依勾稽結果指定）
-CC_MAP = {'20S00': '新莊鈑噴', '28S00': '撫遠鈑噴', '00S10': HQ, '21S00': HQ}
+CC_MAP = {'20S00': '新莊鈑噴', '28S00': '撫遠鈑噴', '00S10': HQ, '21S00': HQ,
+          '19S00': '基隆',  # 2026/11 版費用表「單位」欄空白
+          '00SL0': HQ, '66s00': HQ, '66S00': HQ,  # 零件課（11 月版起成本中心改為 66s00）
+          '00S01': HQ, '00S11': HQ, '00S12': HQ, '00S14': HQ}  # 零服本部、服務管理課、行銷企劃課、日產車技術課
 def unit_of(cc, u):
     if cc in CC_MAP and CC_MAP[cc] in ENT: return CC_MAP[cc]
     u = str(u) if isinstance(u, str) else ''
@@ -294,7 +299,13 @@ def _day(dt):
 def process_gl(e, year, field, nmonths, tag):
     """e：傳票明細 DataFrame；field：'v'（2026）或 'py'（2025）；回傳精簡列並寫入勾稽"""
     e = e.copy()
-    e['code0'] = e['會計科目'].astype(str); e['code'] = e['code0'].map(lambda c: ALIAS.get(c, c)); e['m'] = e['月份'].astype(str).str.replace('月', '').astype(int)
+    miss = e['月份'].isna()
+    if miss.any():  # 原表少數列未填「月份」「金額」：以傳票日期補月份、借方 − 貸方補金額
+        d = pd.to_datetime(e.loc[miss, '傳票日期'], errors='coerce')
+        e.loc[miss, '月份'] = d.dt.month.astype('Int64').astype(str) + '月'
+        if '金額' in e: e.loc[miss & e['金額'].isna(), '金額'] = e.loc[miss & e['金額'].isna(), '借方金額'].fillna(0) - e.loc[miss & e['金額'].isna(), '貸方金額'].fillna(0)
+        units = '、'.join(sorted(set(str(x) for x in e.loc[miss, '單位']))); checks.append(dict(type='費用明細補值' + tag, item=f'{year}｜{int(miss.sum())} 筆傳票未填月份（單位：{units}），以傳票日期補月份、借方 − 貸方補金額', month=0, book=0, detail=int(miss.sum()), diff=0))
+    e['code0'] =e['會計科目'].astype(str); e['code'] = e['code0'].map(lambda c: ALIAS.get(c, c)); e['m'] = e['月份'].astype(str).str.replace('月', '').astype(int)
     e['ent'] = [unit_of(c, u) for c, u in zip(e['成本中心'], e['單位'])]
     e['ent'] = e['ent'].where(e['ent'].apply(lambda x: isinstance(x, str)), None)
     e['outu'] = [('' if isinstance(ent, str) else (u if isinstance(u, str) else f'成本中心 {c}')) for ent, c, u in zip(e['ent'], e['成本中心'], e['單位'])]
