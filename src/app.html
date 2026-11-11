@@ -1795,7 +1795,7 @@ R.bench=el=>{
   if(!BN){ head(el,'經銷商對標','尚未載入對標資料'); return; }
   const yx=BN.dealers['裕信'], nx=BN.dealers['全國(不含裕信)'], Rv=yx.rev;
   head(el,'經銷商對標・降本增效',`資料：${esc(BN.src)}｜${BN.period}｜單位：萬元（原表千元）｜本模組期間固定為對標表期間，不受上方篩選影響`);
-  el.insertAdjacentHTML('beforeend',`<span class="seg" id="btab" style="flex-wrap:wrap;margin-bottom:12px">${[['ov','總覽'],['v2','說明與對策（V2）'],['table','經銷商對標表'],['gap','差距拆解'],['plant','裕信各廠對標'],['region','台北 vs 新北'],['opp','降本增效機會'],['eff','效率指標'],['vol','台數與單台'],['uio','民權客戶承接'],['comp','補償與專案'],['bon','零服獎金'],['ext','外促費用'],['hr','人事費用'],['opex','費用科目明細'],['pl','科目×據點查詢'],['rule','口徑與資料檢核']].map(t=>`<button data-k="${t[0]}" class="${BTAB===t[0]?'on':''}">${t[1]}</button>`).join('')}</span>`);
+  el.insertAdjacentHTML('beforeend',`<span class="seg" id="btab" style="flex-wrap:wrap;margin-bottom:12px">${[['ov','總覽'],['v2','說明與對策（V2）'],['diff','差異總說明（裕信×台北×新北）'],['table','經銷商對標表'],['gap','差距拆解'],['plant','裕信各廠對標'],['region','台北 vs 新北 各廠'],['opp','降本增效機會'],['eff','效率指標'],['vol','台數與單台'],['uio','民權客戶承接'],['comp','補償與專案'],['bon','零服獎金'],['ext','外促費用'],['hr','人事費用'],['opex','費用科目明細'],['pl','科目×據點查詢'],['rule','口徑與資料檢核']].map(t=>`<button data-k="${t[0]}" class="${BTAB===t[0]?'on':''}">${t[1]}</button>`).join('')}</span>`);
   el.querySelectorAll('#btab button').forEach(b=>b.onclick=()=>{BTAB=b.dataset.k;render();});
   const box=document.createElement('div'); el.appendChild(box); (BPAGE[BTAB]||BPAGE.ov)(box,yx,nx,Rv);
 };
@@ -2167,6 +2167,114 @@ BPAGE.v2=el=>{
       ${blk('建議方向',r.dir)}${blk('影響因子',r.factor)}${blk('領先／落後說明',r.expl)}${blk('改善對策',r.act,'good-t')}${blk('內部備註（不提供裕日）',r.internal,'warn-t')}${blk('補充',r.extra)}
       ${!(r.dir||r.factor||r.expl||r.act||r.internal)?'<p class="muted">原表此列沒有文字說明。</p>':''}`; };
   el.querySelectorAll('[data-v2]').forEach(tr=>tr.onclick=()=>show(+tr.dataset.v2)); if(BV2R!=null&&R[BV2R]&&R[BV2R].sec===BV2S) show(BV2R);
+};
+
+/* ---- 19 對標：差異總說明（裕信 × 台北 × 新北）與 台北 vs 新北 各廠（覆蓋原 region 分頁）---- */
+// 構成零服淨利率的各項（經銷商比例口徑：收入為正、成本為負；相加＝淨利率）
+const DLN=[['gp','零服毛利','售價／折讓'],['bonus','零服獎金補助','原廠補助'],['ext','零服外促費用','售價／折讓'],['int','零服內促費用','人事'],['fixd','服務廠固定薪(直接)','人事'],['fixi','服務廠固定薪(間接)','人事'],
+  ['car','租金支出-代步車','資產使用'],['rent','租金支出-一般','資產使用'],['dep','折舊與攤提','資產使用'],['adm','事務費用','營運費用'],['oth','其他費用','營運費用'],['promo','推廣費用','營運費用'],['inv','零件存貨跌價','營運費用']];
+const DLNX=[...DLN.slice(0,7),['C','＝零服貢獻率',''],...DLN.slice(7,11),['E','＝分攤營運費用率',''],['nm','＝零服淨利率','']];
+const v2row=k=>BN.v2?BN.v2.rows.find(r=>r.sec==='零服'&&r.key===k):null;
+const v2txt=k=>{ const r=v2row(k); return r?(r.expl||r.factor||'').split('\n').filter(Boolean).slice(0,2).join('；'):''; };
+const Kx=k=>k==null?'—':W(k*1000); // 千元 → 萬
+const ppA=v=>v==null||!isFinite(v)?'—':`<span class="${v>=0?'good-t':'bad-t'}">${v>=0?'+':''}${(v*100).toFixed(1)} pp</span>`;
+const kA=v=>v==null||!isFinite(v)?'—':`<span class="${v>=0?'good-t':'bad-t'}">${v>=0?'+':''}${Kx(v)}</span>`;
+
+/* 差異總說明 */
+BPAGE.diff=el=>{
+  const yx=dv('裕信'), nx=BN.dealers['全國(不含裕信)'], tp=dv('裕信(台北)'), nb=dv('裕信(新北)');
+  if(!tp||!tp.rev||!nb||!nb.rev){ el.insertAdjacentHTML('beforeend','<div class="card muted">需要「服務部損益說明 V2」的台北／新北數字</div>'); return; }
+  const R={yx:yx.rev,tp:tp.rev,nb:nb.rev};
+  const items=DLN.map(([k,n,g])=>{ const dT=(tp[k]||0)-(nx[k]||0), dN=(nb[k]||0)-(nx[k]||0), dY=(yx[k]||0)-(nx[k]||0);
+    return {k,n,g,y:yx[k],t:tp[k],b:nb[k],x:nx[k],dY,aT:dT*R.tp,aN:dN*R.nb,aY:dY*R.yx}; });
+  const tot={aT:items.reduce((s,o)=>s+o.aT,0),aN:items.reduce((s,o)=>s+o.aN,0),aY:items.reduce((s,o)=>s+o.aY,0)};
+  const gapNm=yx.nm-nx.nm;
+  const bad=items.filter(o=>o.aY<0).sort((a,b)=>a.aY-b.aY), good=items.filter(o=>o.aY>0).sort((a,b)=>b.aY-a.aY);
+  const grp={}; items.forEach(o=>{ grp[o.g]=grp[o.g]||{aT:0,aN:0,aY:0}; grp[o.g].aT+=o.aT; grp[o.g].aN+=o.aN; grp[o.g].aY+=o.aY; });
+  const tN=(tp.nm-nx.nm)*R.tp, nN=(nb.nm-nx.nm)*R.nb;
+  el.insertAdjacentHTML('beforeend',`<div class="grid g4">
+    ${kpiCard({l:'裕信 vs 全國（不含裕信）',v:`${(gapNm*100).toFixed(1)}<small>pp</small>`,c:`淨利率 ${pc(yx.nm)} vs ${pc(nx.nm)}｜換算 <b>${Kx(tot.aY)} 萬</b>（${BN.period}）`})}
+    ${kpiCard({l:'其中：台北 7 單位',v:Kx(tN)+'<small>萬</small>',c:`台北淨利率 ${pc(tp.nm)}｜營收 ${Kx(R.tp)} 萬（${pc(R.tp/R.yx)}）｜占落差 ${pc(tN/tot.aY)}`})}
+    ${kpiCard({l:'其中：新北（含本部）',v:Kx(nN)+'<small>萬</small>',c:`新北淨利率 ${pc(nb.nm)}｜營收 ${Kx(R.nb)} 萬（${pc(R.nb/R.yx)}）｜占落差 ${pc(nN/tot.aY)}`})}
+    ${kpiCard({l:'若追平全國（不含裕信）',v:`+${Kx(-tot.aY)}<small>萬</small>`,c:'1–8 月；年化約 '+Kx(-tot.aY*12/8)+' 萬'})}</div>
+   <div class="card mt ai"><h2 style="color:var(--accent)">結論：裕信和全國差在哪裡</h2>
+    <p><b>裕信零服淨利率 ${pc(yx.nm)}，落後全國（不含裕信）${pc(nx.nm)} 共 ${(Math.abs(gapNm)*100).toFixed(1)} 個百分點，約 ${Kx(Math.abs(tot.aY))} 萬。</b>其中台北 ${Kx(Math.abs(tN))} 萬（${pc(tN/tot.aY)}）、新北 ${Kx(Math.abs(nN))} 萬（${pc(nN/tot.aY)}）；台北營收只占 ${pc(R.tp/R.yx)}，落差占比卻較高，<b>台北每元營收的落差是新北的 ${((tp.nm-nx.nm)/(nb.nm-nx.nm)).toFixed(1)} 倍</b>。</p>
+    <p><b>拉低最多：</b>${bad.slice(0,4).map(o=>`${o.n} ${ppA(o.dY)}（${Kx(o.aY)} 萬；台北 ${Kx(o.aT)}、新北 ${Kx(o.aN)}）`).join('；')}。</p>
+    <p><b>裕信較好：</b>${good.slice(0,4).map(o=>`${o.n} ${ppA(o.dY)}（+${Kx(o.aY)} 萬）`).join('；')}。</p>
+    <p><b>依構面：</b>${Object.entries(grp).sort((a,b)=>a[1].aY-b[1].aY).map(([g,o])=>`${g} ${kA(o.aY)} 萬（台北 ${Kx(o.aT)}／新北 ${Kx(o.aN)}）`).join('、')}。</p>
+    <p class="muted">比例依「${esc(BN.v2?BN.v2.src:'')}」；金額＝（該區比例 − 全國不含裕信比例）× 該區營收，台北＋新北＝裕信。新北含服務部本部。</p></div>
+   <div class="grid g2 mt"><div class="card"><h2>落差來源：台北 vs 新北（萬）</h2><div class="chart tall" id="bdf1"></div></div>
+    <div class="card"><h2>依構面彙總（萬）</h2><div class="chart tall" id="bdf2"></div></div></div>
+   <div class="card mt"><h2>逐項拆解：裕信、台北、新北 vs 全國（不含裕信）</h2><div class="tbl-wrap"><table class="heat"><thead><tr><th>項目</th><th>構面</th><th class="n">全國(不含裕信)</th><th class="n">裕信</th><th class="n">台北</th><th class="n">新北</th><th class="n">裕信差距</th><th class="n">裕信金額（萬）</th><th class="n">台北金額</th><th class="n">新北金額</th><th>原因（V2 說明）</th></tr></thead><tbody>
+    ${items.map(o=>`<tr><td><b>${o.n}</b></td><td>${o.g}</td><td class="n">${pc(o.x)}</td><td class="n">${pc(o.y)}</td><td class="n" style="${heatBg((o.t||0)-(o.x||0),0.03)}">${pc(o.t)}</td><td class="n" style="${heatBg((o.b||0)-(o.x||0),0.03)}">${pc(o.b)}</td><td class="n">${ppA(o.dY)}</td><td class="n">${kA(o.aY)}</td><td class="n">${kA(o.aT)}</td><td class="n">${kA(o.aN)}</td><td style="font-size:12px;min-width:260px">${esc(v2txt(o.k)).slice(0,140)}</td></tr>`).join('')}
+    <tr class="lv1" data-keep="1"><td>零服淨利率</td><td></td><td class="n">${pc(nx.nm)}</td><td class="n">${pc(yx.nm)}</td><td class="n">${pc(tp.nm)}</td><td class="n">${pc(nb.nm)}</td><td class="n">${ppA(gapNm)}</td><td class="n">${kA(tot.aY)}</td><td class="n">${kA(tot.aT)}</td><td class="n">${kA(tot.aN)}</td><td></td></tr></tbody></table></div>
+    <div class="muted">底色＝該區與全國（不含裕信）比較：藍＝較有利、紅＝較不利｜各項相加＝淨利率差距（原表尾差 ±0.1 pp）</div></div>`);
+  const cats=items.map(o=>o.n);
+  mkChart('bdf1',{grid:{left:130,right:20,top:30,bottom:30},tooltip:{trigger:'axis',axisPointer:{type:'shadow'},valueFormatter:v=>(+v).toFixed(1)+' 萬'},legend:{top:0},
+    yAxis:{type:'category',data:cats,inverse:true,axisLabel:{fontSize:11}},xAxis:{type:'value'},
+    series:[{name:'台北',type:'bar',stack:'a',data:items.map(o=>+(o.aT/10).toFixed(1))},{name:'新北',type:'bar',stack:'a',data:items.map(o=>+(o.aN/10).toFixed(1))}]});
+  const gs=Object.entries(grp).sort((a,b)=>a[1].aY-b[1].aY);
+  mkChart('bdf2',{grid:{left:100,right:20,top:30,bottom:30},tooltip:{trigger:'axis',axisPointer:{type:'shadow'},valueFormatter:v=>(+v).toFixed(1)+' 萬'},legend:{top:0},
+    yAxis:{type:'category',data:gs.map(x=>x[0]),inverse:true},xAxis:{type:'value'},
+    series:[{name:'台北',type:'bar',stack:'a',data:gs.map(x=>+(x[1].aT/10).toFixed(1))},{name:'新北',type:'bar',stack:'a',data:gs.map(x=>+(x[1].aN/10).toFixed(1))}]});
+};
+
+/* 台北 vs 新北 各廠（取代原分頁） */
+let BRGV='mat';
+BPAGE.region=(el,yx,nx)=>{
+  const rs=regionSets(); const tp=dv('裕信(台北)'), nb=dv('裕信(新北)');
+  const plantsOf=set=>set.map(n=>({n,p:BN.plants[n],o:pRatio(BN.plants[n])})).filter(x=>x.o);
+  const TP=plantsOf(rs.台北), NB=plantsOf(rs.新北), HQp=BN.plants['服務部本部'];
+  const isBP=n=>/鈑噴/.test(n);
+  const eff=p=>({perCar:p.paid?p.rev/p.paid:null,comp:p.cars?(p.comp||0)/p.cars:null,perHead:p.heads?p.rev/p.heads/8:null,perTech:p.dheads?p.rev/p.dheads/8:null,carsTech:p.dheads?(p.cars||0)/p.dheads/8:null,ratio:p.dheads?p.iheads/p.dheads:null,dpay:p.dpay,ipay:p.ipay});
+  const avgR=set=>pRatio(sumPlants(set.filter(n=>!isBP(n))));
+  const tpS=avgR(rs.台北), nbS=avgR(rs.新北);
+  // 兩區差距（V2，新北含本部）
+  const dd=DLN.map(([k,n,g])=>({k,n,g,d:(nb[k]||0)-(tp[k]||0)})).sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
+  const dnm=nb.nm-tp.nm;
+  el.insertAdjacentHTML('beforeend',`${BN.v2?`<div class="banner">分區依「${esc(BN.v2.src)}」：<b>台北＝${rs.台北.join('、')}</b>；<b>新北＝${rs.新北.join('、')}＋服務部本部</b>。區域數字採 V2；各廠數字採「淨利(含金額)」1–8 月（本部已依 V2 更正）。</div>`:''}
+   <div class="grid g4">${['裕信(台北)','裕信(新北)'].map((n,i)=>{ const d=i?nb:tp, py=BN.dealers[n+'(2025同期)']||{}; return kpiCard({l:`${n.slice(3,5)} 零服淨利率`,v:pc(d.nm),tag:`<span class="tag ${d.nm>=nx.nm?'good':'bad'}">${ppx(d.nm-nx.nm)}</span>`,c:`淨利 ${Kx(d.net)} 萬｜營收 ${Kx(d.rev)} 萬（去年 ${Kx(py.rev)}，${SP(py.rev?d.rev/py.rev-1:null)}）｜去年淨利率 ${pc(py.nm)}｜吸收率 ${pc(d.absorb)}`}); }).join('')}
+    ${kpiCard({l:'新北 − 台北 淨利率',v:`${(dnm*100).toFixed(1)}<small>pp</small>`,c:`以台北營收換算：台北若達新北水準，1–8 月多 <b>${Kx(dnm*tp.rev)} 萬</b>`})}
+    ${kpiCard({l:'服務廠平均（不含鈑噴、本部）',v:`${pc(tpS.nm)} ｜ ${pc(nbS.nm)}`,c:`台北 ${TP.filter(x=>!isBP(x.n)).length} 廠 vs 新北 ${NB.filter(x=>!isBP(x.n)).length} 廠｜鈑噴中心：撫遠 ${Kx(BN.plants['撫遠鈑噴'].net)} 萬、新莊 ${Kx(BN.plants['新莊鈑噴'].net)} 萬`})}</div>
+   <div class="grid g2 mt"><div class="card"><h2>台北 → 新北：淨利率差距拆解（pp）</h2><div class="chart tall" id="brg1"></div></div>
+    <div class="card ai"><h2 style="color:var(--accent)">台北和新北差在哪裡</h2>
+     <p><b>新北淨利率 ${pc(nb.nm)}，比台北 ${pc(tp.nm)} 高 ${(dnm*100).toFixed(1)} 個百分點。</b></p>
+     <p>差最多的項目：${dd.slice(0,5).map(o=>`${o.n} ${o.d>=0?'新北較好':'台北較好'} ${(Math.abs(o.d)*100).toFixed(1)} pp（≈${Kx(Math.abs(o.d)*tp.rev)} 萬）`).join('；')}。</p>
+     <p>台北的結構特徵：外促 ${pc(-tp.ext)}（新北 ${pc(-nb.ext)}，承接誠隆護照抵用券）、租金 ${pc(-tp.rent)}（新北 ${pc(-nb.rent)}）、內促 ${pc(-tp.int)}（新北 ${pc(-nb.int)}）；但原廠獎金 ${pc(tp.bonus)} 高於新北 ${pc(nb.bonus)}。台北含撫遠鈑噴中心（1–8 月淨利 ${Kx(BN.plants['撫遠鈑噴'].net)} 萬），只看台北 6 個服務廠淨利率為 ${pc(tpS.nm)}，與新北服務廠 ${pc(nbS.nm)} 差 ${((nbS.nm-tpS.nm)*100).toFixed(1)} pp。</p>
+     <p class="muted">${esc(v2txt('nm'))}</p></div></div>
+   <div class="card mt" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">各廠比較 <span class="seg" id="brgv">${[['mat','損益結構'],['eff','效率指標'],['diag','逐廠診斷']].map(o=>`<button data-k="${o[0]}" class="${BRGV===o[0]?'on':''}">${o[1]}</button>`).join('')}</span><span class="muted">底色：與全國（不含裕信）比，藍＝較有利、紅＝較不利</span></div>
+   <div id="brgb"></div>`);
+  el.querySelectorAll('#brgv button').forEach(b=>b.onclick=()=>{BRGV=b.dataset.k;render();});
+  mkChart('brg1',{grid:{left:130,right:30,top:20,bottom:30},tooltip:{trigger:'axis',axisPointer:{type:'shadow'},valueFormatter:v=>(+v).toFixed(2)+' pp'},
+    yAxis:{type:'category',data:dd.map(o=>o.n),inverse:true,axisLabel:{fontSize:11}},xAxis:{type:'value'},
+    series:[{type:'bar',data:dd.map(o=>({value:+(o.d*100).toFixed(2),itemStyle:{color:o.d>=0?css('--s1'):css('--s8')}})),label:{show:true,position:'right',fontSize:10,formatter:p=>(p.value>=0?'+':'')+p.value}}]});
+  const box=document.getElementById('brgb');
+  const cols=[...TP.map(x=>({n:x.n,o:x.o,p:x.p,r:'台北'})),{n:'台北合計(V2)',o:tp,p:null,r:'台北',sum:1},...NB.map(x=>({n:x.n,o:x.o,p:x.p,r:'新北'})),{n:'服務部本部',o:pRatio(HQp),p:HQp,r:'新北',hq:1},{n:'新北合計(V2)',o:nb,p:null,r:'新北',sum:1},{n:'全國(不含裕信)',o:nx,p:null,nat:1}];
+  if(BRGV==='mat'){
+    box.innerHTML=`<div class="card mt"><h2>各廠零服損益結構（占營收比例，1–8 月）</h2><div class="tbl-wrap"><table class="heat"><thead><tr><th>項目</th>${cols.map(c=>`<th class="n">${c.sum||c.nat?`<b>${c.n}</b>`:c.n}${c.r&&!c.sum?`<br><span class="muted">${c.r}</span>`:''}</th>`).join('')}</tr></thead><tbody>
+      <tr class="lv1"><td>零服營收（萬）</td>${cols.map(c=>`<td class="n">${c.p?Kx(c.p.rev):(c.o&&c.o.rev?Kx(c.o.rev):'—')}</td>`).join('')}</tr>
+      ${DLNX.map(([k,n])=>`<tr class="${['C','E','nm'].includes(k)?'lv1':''}"><td>${n}</td>${cols.map(c=>{ const v=c.o?c.o[k]:null; const bp=c.p&&(isBP(c.n)||c.hq); const d=!bp&&!c.nat&&v!=null&&nx[k]!=null?v-nx[k]:null; return `<td class="n" style="${heatBg(d,0.03)}">${bp?'<span class="muted">'+pc(v)+'</span>':pc(v)}</td>`; }).join('')}</tr>`).join('')}
+      <tr class="lv1"><td>零服淨利（萬）</td>${cols.map(c=>`<td class="n">${c.p?Kx(c.p.net!=null?c.p.net:c.p.C-c.p.E):(c.o&&c.o.net!=null?Kx(c.o.net):'—')}</td>`).join('')}</tr></tbody></table></div>
+      <div class="muted">鈑噴中心、本部的比例以灰字顯示（營收極小或為外販，比例不具比較意義）｜台北／新北合計採 V2 正式數字（新北含本部）；各廠採「淨利(含金額)」</div></div>`;
+  } else if(BRGV==='eff'){
+    const E=[['perCar','單台有費營收（千元）',v=>v.toFixed(1)],['comp','補償台數占比',v=>pc(v)],['perHead','人均月營收（萬）',v=>Kx(v)],['perTech','直接人員人均月營收（萬）',v=>Kx(v)],['carsTech','每直接人員月進廠台數',v=>v.toFixed(1)],['ratio','間接／直接人數比',v=>v.toFixed(2)],['dpay','直接月固薪（千元）',v=>(+v).toFixed(1)],['ipay','間接月固薪（千元）',v=>(+v).toFixed(1)]];
+    const svc=[...TP,...NB].filter(x=>!isBP(x.n)); const med=k=>median(svc.map(x=>eff(x.p)[k]));
+    const sumEff=set=>{ const s=sumPlants(set.map(x=>x.n).filter(n=>!isBP(n))); return eff(s); };
+    const C2=[...TP.filter(x=>!isBP(x.n)).map(x=>({n:x.n,e:eff(x.p),r:'台北'})),{n:'台北服務廠',e:sumEff(TP),sum:1},...NB.filter(x=>!isBP(x.n)).map(x=>({n:x.n,e:eff(x.p),r:'新北'})),{n:'新北服務廠',e:sumEff(NB),sum:1}];
+    box.innerHTML=`<div class="card mt"><h2>各廠效率指標（服務廠，1–8 月）</h2><div class="tbl-wrap"><table class="heat"><thead><tr><th>指標</th>${C2.map(c=>`<th class="n">${c.sum?`<b>${c.n}</b>`:c.n}${c.r?`<br><span class="muted">${c.r}</span>`:''}</th>`).join('')}<th class="n">中位數</th></tr></thead><tbody>
+      ${E.map(([k,n,f])=>{ const m=med(k); const dir=['comp','ratio','dpay','ipay'].includes(k)?-1:1; return `<tr><td>${n}</td>${C2.map(c=>{ const v=c.e[k]; const d=v==null||m==null?null:dir*(v-m)/(Math.abs(m)||1); return `<td class="n" style="${['dpay','ipay'].includes(k)?'':heatBg(d,0.25)}">${v==null?'—':f(v)}</td>`; }).join('')}<td class="n muted">${m==null?'—':f(m)}</td></tr>`; }).join('')}</tbody></table></div>
+      <div class="muted">底色與服務廠中位數比較（補償占比、間接／直接比越低越好）｜薪資不著色｜人數為 1–8 月平均</div></div>`;
+  } else {
+    const svc=[...TP,...NB].filter(x=>!isBP(x.n));
+    const diag=svc.map(x=>{ const ref=x.r==='台北'?tpS:nbS; const g=DLN.filter(([k])=>!['promo','inv'].includes(k)).map(([k,n])=>({n,d:(x.o[k]||0)-(nx[k]||0),dr:(x.o[k]||0)-(ref[k]||0)})).map(o=>({...o,a:o.d*x.p.rev}));
+      return {...x,region:rs.台北.includes(x.n)?'台北':'新北',g:g.sort((a,b)=>a.a-b.a),gap:(x.o.nm-nx.nm)*x.p.rev}; }).sort((a,b)=>a.o.nm-b.o.nm);
+    box.innerHTML=`<div class="grid g2 mt">${diag.map(x=>`<div class="card"><h2>${x.n} <span class="tag neu">${x.region}</span> 淨利率 ${pc(x.o.nm)} <span class="tag ${x.gap>=0?'good':'bad'}">${ppx(x.o.nm-nx.nm)}</span></h2>
+      <p>營收 ${Kx(x.p.rev)} 萬｜淨利 ${Kx(x.p.net)} 萬｜vs 全國（不含裕信）${kA(x.gap)} 萬｜vs ${x.region}服務廠平均 ${ppA(x.o.nm-(x.region==='台北'?tpS:nbS).nm)}</p>
+      <p><b>落後最多：</b>${x.g.filter(o=>o.a<0).slice(0,3).map(o=>`${o.n} ${ppA(o.d)}（${Kx(o.a)} 萬）`).join('；')||'無'}</p>
+      <p><b>優於全國：</b>${x.g.filter(o=>o.a>0).slice(-3).reverse().map(o=>`${o.n} ${ppA(o.d)}（+${Kx(o.a)} 萬）`).join('；')||'無'}</p>
+      <p class="muted">單台有費營收 ${eff(x.p).perCar?eff(x.p).perCar.toFixed(1):'—'} 千元｜補償占比 ${pc(eff(x.p).comp)}｜人均月營收 ${Kx(eff(x.p).perHead)} 萬｜人數 ${x.p.heads!=null?(+x.p.heads).toFixed(1):'—'}</p></div>`).join('')}</div>
+      <div class="muted mt">依淨利率由低到高排列｜金額＝（該廠比例 − 全國不含裕信比例）× 該廠營收</div>`;
+  }
 };
 
 /* 口徑與資料檢核 */
