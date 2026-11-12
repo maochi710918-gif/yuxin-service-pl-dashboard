@@ -8,7 +8,8 @@ SRC = sys.argv[1] if len(sys.argv) > 1 else r'C:\Users\ES\OneDrive\桌面\AI參�
 _tmp = os.path.join(tempfile.gettempdir(), '_svc_pl_src.xlsx'); shutil.copyfile(SRC, _tmp)  # 避免 Excel 開啟中被鎖定
 SRC_NAME = os.path.basename(SRC); SRC = _tmp
 wb = openpyxl.load_workbook(SRC, data_only=True)
-MONTH_SHEETS = [f'26{m:02d}' for m in range(1, 13) if f'26{m:02d}' in wb.sheetnames and wb[f'26{m:02d}'].max_row > 10]  # 只收有資料的月份
+MAX_M = int(os.environ.get('MAX_MONTH', '12'))  # 可限制只收到第幾月（例：與會議資料同步時設 9）
+MONTH_SHEETS = [f'26{m:02d}' for m in range(1, MAX_M + 1) if f'26{m:02d}' in wb.sheetnames and wb[f'26{m:02d}'].max_row > 10]  # 只收有資料的月份
 NM = len(MONTH_SHEETS)
 GL26_SHEET = next((n for n in wb.sheetnames if n.startswith('2601') and '費用表' in n), None)
 # 單位清單：直接讀 2601 表頭（新增單位會自動帶入）
@@ -219,7 +220,9 @@ if NP == 12:
             a = by_code[code]; sm = sum(num(ws5.cell(a['xrow'], 7 + m).value) for m in range(12))
             checks.append(dict(type='2025資料', item=f"{code} {a['name']}：2025 月別合計 vs 2026 表「25年實績」", month=0, book=a['a25'], detail=sm, diff=a['a25'] - sm))
 # 總表合計欄 vs 月加總
-for a in accts:
+_cut = MAX_M < 12 and any(f'26{m:02d}' in wb.sheetnames and wb[f'26{m:02d}'].max_row > 10 for m in range(MAX_M + 1, 13))
+if _cut: checks.append(dict(type='期間設定', item=f'儀表板只收到 {MAX_M} 月（與會議資料同步）；原檔已有之後月份，總表合計欄不比對', month=0, book=0, detail=0, diff=0))
+for a in ([] if _cut else accts):
     tot = num(ws.cell(a['xrow'], 19).value); s = sum(a['svc'])
     if abs(tot - s) > 1:
         checks.append(dict(type='YTD合計', item=f"{a['code']} {a['name']}", month=0, book=tot, detail=s, diff=tot - s))
@@ -353,6 +356,7 @@ def process_gl(e, year, field, nmonths, tag):
         rows.append([i + 2, si(code), si(str(r.會計科目中文) + ('' if r.code0 == code else f'（傳票科目 {r.code0}）')), ent, si(r.outu), int(r.m), _day(r.傳票日期),
                      int(r.借方金額), int(r.貸方金額), int(sign.get(code, 1) * r.金額), si(s), si(vendor(s)), si(c1), si(c2), int(r.傳票號碼), si(r.成本中心), year])
     return rows
+e = e[e['月份'].isna() | (e['月份'].astype(str).str.replace('月', '').str.extract(r'(\d+)')[0].astype(float).fillna(0) <= MAX_M)]
 exp = process_gl(e, 2026, 'v', NM, '')
 if '2025費用表' in wb.sheetnames and NP:
     e25 = pd.read_excel(SRC, sheet_name='2025費用表')
